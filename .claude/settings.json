@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Workbench\\\\basic interface\" -Recurse -Force | Sort-Object FullName | ForEach-Object { $_.FullName.Replace\\(\"c:\\\\Workbench\\\\basic interface\", \".\"\\) })"
+    ]
+  }
+}
