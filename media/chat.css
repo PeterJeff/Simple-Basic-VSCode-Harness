@@ -112,7 +112,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     width: 100%;
 }
 
-.msg-assistant.streaming::after {
+.msg-assistant.streaming .md-content::after {
     content: '▍';
     display: inline;
     animation: blink 0.8s step-start infinite;
@@ -522,6 +522,49 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     cursor: pointer;
 }
 .open-settings-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+
+/* ── Message footer (timestamp + action buttons) ───────────────────────────── */
+.msg-footer {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 5px;
+}
+
+.msg-ts {
+    font-size: 10px;
+    opacity: 0.45;
+    white-space: nowrap;
+}
+
+.msg-action-btn {
+    font-size: 11px;
+    padding: 1px 5px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    border: 1px solid transparent;
+    border-radius: 2px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.1s;
+    line-height: 1.4;
+}
+.msg:hover .msg-action-btn { opacity: 0.7; }
+.msg-action-btn:hover { opacity: 1 !important; background: var(--vscode-toolbar-hoverBackground); border-color: var(--vscode-widget-border); }
+
+/* Retry button inside error messages */
+.retry-btn {
+    display: block;
+    margin-top: 5px;
+    padding: 2px 10px;
+    font-size: 11px;
+    background: transparent;
+    color: var(--vscode-foreground);
+    border: 1px solid var(--vscode-widget-border, #555);
+    border-radius: 2px;
+    cursor: pointer;
+}
+.retry-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

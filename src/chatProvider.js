@@ -140,6 +140,16 @@ class ChatViewProvider {
                 await this._sendFileSuggestions(msg.query);
                 break;
 
+            case 'fork':
+                await this._handleFork(msg.userMsgIdx);
+                break;
+
+            case 'retry':
+                if (!agentRunner.isRunning()) {
+                    await this._retryLastMessage();
+                }
+                break;
+
             case 'updateToolPermission':
                 await this._updateToolPermission(msg.tool, msg.level);
                 break;
@@ -209,20 +219,59 @@ class ChatViewProvider {
             this._session.title = rawText.slice(0, 60);
         }
 
-        // Show user message in UI (display text only, not the injected file content)
-        const displayMsgId = `u_${Date.now()}`;
         this.sendToWebview({
             type: 'userMessage',
-            id: displayMsgId,
+            id: `u_${Date.now()}`,
+            ts: Date.now(),
             text: rawText,
             contextFiles: contextBlocks.map(b => b.path)
         });
 
-        // Start agent — onMessageStart fires before each LLM turn
+        await this._runAgent();
+    }
+
+    async _retryLastMessage() {
+        const hasUser = this._session.messages.some(m => m.role === 'user');
+        if (!hasUser) return;
+        await this._runAgent();
+    }
+
+    async _handleFork(userMsgIdx) {
+        if (agentRunner.isRunning()) agentRunner.stop();
+
+        if (this._session.messages.length > 0) {
+            this._history.saveSession(this._session);
+        }
+
+        // Find the userMsgIdx-th user message and slice before it
+        let userCount = 0;
+        let sliceAt = -1;
+        for (let i = 0; i < this._session.messages.length; i++) {
+            if (this._session.messages[i].role === 'user') {
+                if (userCount === userMsgIdx) { sliceAt = i; break; }
+                userCount++;
+            }
+        }
+        if (sliceAt === -1) sliceAt = 0;
+
+        const newSession = this._history.createSession();
+        newSession.messages = this._session.messages.slice(0, sliceAt);
+        if (newSession.messages.length > 0) {
+            const firstUser = newSession.messages.find(m => m.role === 'user');
+            if (firstUser) newSession.title = String(firstUser.content || '').slice(0, 60);
+        }
+        this._session = newSession;
+        this._sessionState = null;
+
+        this.sendToWebview({ type: 'forkReady', session: this._session });
+        this.sendToWebview({ type: 'sessions', sessions: this._history.getSessions() });
+    }
+
+    async _runAgent() {
         await agentRunner.run(this._mode, [...this._session.messages], this._sessionState, {
             onMessageStart: (id) => {
                 this._streamMsgId = id;
-                this.sendToWebview({ type: 'assistantStart', id });
+                this.sendToWebview({ type: 'assistantStart', id, ts: Date.now() });
             },
             onToken: (tok) => {
                 this.sendToWebview({ type: 'token', id: this._streamMsgId, text: tok });
@@ -240,7 +289,6 @@ class ChatViewProvider {
                 this.sendToWebview({ type: 'status', text });
             },
             onComplete: ({ messages: finalMessages, sessionState }) => {
-                // Sync session messages back (agent may have added multiple turns)
                 this._session.messages = finalMessages;
                 this._sessionState = sessionState;
                 this._history.saveSession(this._session);

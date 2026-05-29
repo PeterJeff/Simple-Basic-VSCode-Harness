@@ -235,6 +235,11 @@
             .replace(/"/g, '&quot;');
     }
 
+    function fmtTime(ts) {
+        if (!ts) return '';
+        return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    }
+
     // Global for copy button (inline onclick)
     window.copyCode = function(btn) {
         const code = btn.nextElementSibling?.textContent || '';
@@ -250,11 +255,28 @@
         const div = document.createElement('div');
         div.className = 'msg msg-user';
         div.dataset.id = msg.id;
+
         let html = `<div>${esc(msg.raw).replace(/\n/g, '<br>')}</div>`;
         if (msg.contextFiles && msg.contextFiles.length > 0) {
             html += `<div class="ctx-files">📎 ${msg.contextFiles.map(esc).join(', ')}</div>`;
         }
+        const ts = msg.ts ? fmtTime(msg.ts) : '';
+        html += `<div class="msg-footer">
+  <button class="msg-action-btn msg-edit-btn" title="Edit &amp; fork conversation from here">✎</button>
+  <button class="msg-action-btn msg-copy-btn" title="Copy raw text">⎘</button>
+  <span style="flex:1"></span>
+  <span class="msg-ts">${ts}</span>
+</div>`;
         div.innerHTML = html;
+
+        div.querySelector('.msg-edit-btn').addEventListener('click', () => handleEdit(msg.id));
+        div.querySelector('.msg-copy-btn').addEventListener('click', function() {
+            navigator.clipboard?.writeText(msg.raw).then(() => {
+                this.textContent = '✓';
+                setTimeout(() => { this.textContent = '⎘'; }, 1500);
+            });
+        });
+
         return div;
     }
 
@@ -276,13 +298,43 @@
                 div.appendChild(createToolBlock(tc));
             }
         }
+
+        const footer = document.createElement('div');
+        footer.className = 'msg-footer';
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'msg-action-btn msg-copy-btn';
+        copyBtn.title = 'Copy raw text';
+        copyBtn.textContent = '⎘';
+        copyBtn.addEventListener('click', function() {
+            navigator.clipboard?.writeText(msg.raw).then(() => {
+                this.textContent = '✓';
+                setTimeout(() => { this.textContent = '⎘'; }, 1500);
+            });
+        });
+        const spacer = document.createElement('span');
+        spacer.style.flex = '1';
+        const tsSpan = document.createElement('span');
+        tsSpan.className = 'msg-ts';
+        tsSpan.textContent = msg.ts ? fmtTime(msg.ts) : '';
+        footer.appendChild(copyBtn);
+        footer.appendChild(spacer);
+        footer.appendChild(tsSpan);
+        div.appendChild(footer);
+
         return div;
     }
 
     function createErrorEl(text) {
         const div = document.createElement('div');
         div.className = 'msg-error';
-        div.textContent = '⚠ ' + text;
+        const msgSpan = document.createElement('span');
+        msgSpan.textContent = '⚠ ' + text;
+        div.appendChild(msgSpan);
+        const retryBtn = document.createElement('button');
+        retryBtn.className = 'retry-btn';
+        retryBtn.textContent = '↻ Retry';
+        retryBtn.addEventListener('click', handleRetry);
+        div.appendChild(retryBtn);
         return div;
     }
 
@@ -336,6 +388,40 @@
         el.msgInput.disabled = v;
         el.stopBtn.classList.toggle('visible', v);
         if (!v) el.statusText.textContent = '';
+    }
+
+    // ── Edit / retry ─────────────────────────────────────────────────────────
+
+    function handleEdit(msgId) {
+        const idx = state.messages.findIndex(m => m.id === msgId);
+        if (idx === -1) return;
+        const msg = state.messages[idx];
+
+        // Count user messages strictly before this one so host can slice correctly
+        const userMsgIdx = state.messages.slice(0, idx).filter(m => m.role === 'user').length;
+
+        // Restore text to input
+        el.msgInput.value = msg.raw;
+        el.msgInput.style.height = 'auto';
+        el.msgInput.style.height = Math.min(el.msgInput.scrollHeight, 160) + 'px';
+        el.msgInput.focus();
+
+        // Truncate display and tell host to fork the session
+        state.messages = state.messages.slice(0, idx);
+        rerenderAll();
+        vscode.postMessage({ type: 'fork', userMsgIdx });
+    }
+
+    function handleRetry() {
+        if (state.isProcessing) return;
+        // Remove trailing errors and any pending assistant bubble
+        while (state.messages.length > 0) {
+            const last = state.messages[state.messages.length - 1];
+            if (last.role === 'error' || last.pending) { state.messages.pop(); }
+            else break;
+        }
+        rerenderAll();
+        vscode.postMessage({ type: 'retry' });
     }
 
     // ── Toolbar interactions ─────────────────────────────────────────────────
@@ -688,7 +774,8 @@
                     id: msg.id,
                     role: 'user',
                     raw: msg.text,
-                    contextFiles: msg.contextFiles || []
+                    contextFiles: msg.contextFiles || [],
+                    ts: msg.ts || Date.now()
                 };
                 state.messages.push(uMsg);
                 el.messages.appendChild(createUserEl(uMsg));
@@ -698,7 +785,7 @@
 
             case 'assistantStart': {
                 setProcessing(true);
-                const aMsg = { id: msg.id, role: 'assistant', raw: '', toolCalls: [], pending: true };
+                const aMsg = { id: msg.id, role: 'assistant', raw: '', toolCalls: [], pending: true, ts: msg.ts || Date.now() };
                 state.messages.push(aMsg);
                 el.messages.appendChild(createAssistantEl(aMsg));
                 scrollBottom();
@@ -789,11 +876,28 @@
             }
 
             case 'error': {
+                // Remove any blank pending assistant bubble so the error stands alone
+                const pendingIdx = state.messages.findIndex(m => m.pending);
+                if (pendingIdx !== -1) {
+                    state.messages.splice(pendingIdx, 1);
+                    el.messages.querySelector('.msg-assistant.streaming')?.remove();
+                }
                 const errEl = createErrorEl(msg.text);
                 el.messages.appendChild(errEl);
                 state.messages.push({ id: `e_${Date.now()}`, role: 'error', raw: msg.text });
                 setProcessing(false);
                 scrollBottom();
+                break;
+            }
+
+            case 'forkReady': {
+                state.messages = [];
+                el.messages.innerHTML = '';
+                setProcessing(false);
+                if (msg.session && msg.session.messages.length > 0) {
+                    _loadMessages(msg.session.messages);
+                }
+                el.msgInput.focus();
                 break;
             }
 
@@ -834,7 +938,7 @@
                     name: tc.function?.name || '',
                     args: (() => { try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; } })(),
                     result: null,
-                    done: false
+                    done: true
                 }));
                 const dm = {
                     id: `a_${Math.random().toString(36).slice(2)}`,
