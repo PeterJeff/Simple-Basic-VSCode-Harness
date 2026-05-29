@@ -122,6 +122,7 @@ class AgentRunner {
                     runMessages.push({
                         role: 'tool',
                         tool_call_id: tc.id,
+                        name: name,
                         content: JSON.stringify(toolResult)
                     });
                 }

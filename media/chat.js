@@ -398,7 +398,7 @@
     el.sendBtn.addEventListener('click', sendMessage);
 
     el.msgInput.addEventListener('keydown', (e) => {
-        if (state.atDropdown.classList?.contains('visible') || el.atDropdown.classList.contains('visible')) {
+        if (el.atDropdown.classList.contains('visible')) {
             if (e.key === 'ArrowDown') { e.preventDefault(); moveAtSelection(1); return; }
             if (e.key === 'ArrowUp')   { e.preventDefault(); moveAtSelection(-1); return; }
             if (e.key === 'Enter' || e.key === 'Tab') {
