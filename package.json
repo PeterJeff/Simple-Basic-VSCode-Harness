@@ -1,0 +1,212 @@
+{
+  "name": "standalone-agent",
+  "displayName": "Standalone Agent",
+  "description": "Autonomous agentic coding assistant — air-gapped, zero external dependencies",
+  "version": "0.3.0",
+  "engines": { "vscode": "^1.80.0" },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "standalone-agent",
+          "title": "Standalone Agent",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "standalone-agent": [
+        {
+          "type": "webview",
+          "id": "standalone-agent.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "standalone-agent.newChat",
+        "title": "New Chat",
+        "category": "Standalone Agent",
+        "icon": "$(add)"
+      },
+      {
+        "command": "standalone-agent.clearHistory",
+        "title": "Clear All History",
+        "category": "Standalone Agent"
+      },
+      {
+        "command": "standalone-agent.toggleVerbose",
+        "title": "Toggle Verbose Logging",
+        "category": "Standalone Agent"
+      },
+      {
+        "command": "standalone-agent.showLogs",
+        "title": "Show Output Logs",
+        "category": "Standalone Agent",
+        "icon": "$(output)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "standalone-agent.newChat",
+          "when": "view == standalone-agent.chatView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "standalone-agent.showLogs",
+          "when": "view == standalone-agent.chatView",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Standalone Agent",
+      "properties": {
+        "standaloneAgent.activeEndpoint": {
+          "type": "string",
+          "order": 1,
+          "description": "Name of the active endpoint. Must match a name in standaloneAgent.endpoints.",
+          "default": "Local OpenAI"
+        },
+        "standaloneAgent.servers": {
+          "type": "array",
+          "order": 2,
+          "markdownDescription": "Physical server instances. Each server has a `name` (used by endpoints), `url`, and optional `apiKey`.",
+          "default": [
+            {
+              "name": "Local",
+              "url": "http://localhost:11434/v1",
+              "apiKey": ""
+            }
+          ],
+          "items": {
+            "type": "object",
+            "required": ["name", "url"],
+            "properties": {
+              "name":   { "type": "string", "description": "Unique display name for this server" },
+              "url":    { "type": "string", "description": "Base URL (e.g. http://host:port/v1)" },
+              "apiKey": { "type": "string", "default": "", "description": "API key / bearer token (leave empty if not required)" }
+            }
+          }
+        },
+        "standaloneAgent.endpoints": {
+          "type": "array",
+          "order": 3,
+          "markdownDescription": "Logical endpoints — each combines a server with an adapter type and optional overrides.\n\n**Adapters:** `openai`, `gemini-jank`, `gemini`, `ask-sage`\n\nFor Ask Sage's OpenAI sub-API: use `adapter: \"openai\"` with `pathOverrides`.\n\nPer-endpoint `streaming` overrides the global toggle. `model` overrides the sidebar model selector.",
+          "default": [
+            {
+              "name": "Local OpenAI",
+              "server": "Local",
+              "adapter": "openai"
+            }
+          ],
+          "items": {
+            "type": "object",
+            "required": ["name", "server", "adapter"],
+            "properties": {
+              "name":    { "type": "string", "description": "Unique display name shown in the endpoint dropdown" },
+              "server":  { "type": "string", "description": "Must match a name in standaloneAgent.servers" },
+              "adapter": {
+                "type": "string",
+                "enum": ["openai", "gemini-jank", "gemini", "ask-sage"],
+                "description": "Protocol adapter to use for this endpoint"
+              },
+              "streaming": {
+                "type": "boolean",
+                "description": "Per-endpoint streaming override. Omit to use the global streaming setting."
+              },
+              "model": {
+                "type": "string",
+                "default": "",
+                "description": "Per-endpoint model override. Omit to use the sidebar model selector."
+              },
+              "pathOverrides": {
+                "type": "object",
+                "description": "Override URL paths for non-standard deployments (e.g. Ask Sage sub-APIs).",
+                "properties": {
+                  "chat":   { "type": "string", "description": "Path for chat completions (e.g. /openai/v1/chat/completions)" },
+                  "models": { "type": "string", "description": "Path for model listing (e.g. /openai/v1/models)" }
+                }
+              },
+              "adapterOptions": {
+                "type": "object",
+                "markdownDescription": "Adapter-specific options.\n\n**gemini-jank:** `sessionField`, `modelField`, `minWordCount`, `systemTag`, `historyTag`, `currentTag`\n\n**gemini:** `apiVersion`, `useQueryKey`, `cachedContent`",
+                "properties": {
+                  "sessionField":   { "type": "string",  "description": "[gemini-jank] Response/request field for the session ID. Default: session_id" },
+                  "modelField":     { "type": "string",  "description": "[gemini-jank] Request field for the model name. Default: model" },
+                  "minWordCount":   { "type": "number",  "description": "[gemini-jank] Minimum word count for collapsed messages. Default: 0 (disabled)" },
+                  "systemTag":      { "type": "string",  "description": "[gemini-jank] XML tag for the system prompt block. Default: SystemPrompt" },
+                  "historyTag":     { "type": "string",  "description": "[gemini-jank] XML tag for conversation history. Default: ConversationHistory" },
+                  "currentTag":     { "type": "string",  "description": "[gemini-jank] XML tag for the current request. Default: CurrentRequest" },
+                  "apiVersion":     { "type": "string",  "description": "[gemini] API version path segment. Default: v1 (stable). Use v1beta for preview features." },
+                  "useQueryKey":    { "type": "boolean", "description": "[gemini] Pass the API key as ?key= query param instead of the x-goog-api-key header. Default: false" },
+                  "cachedContent":  { "type": "string",  "description": "[gemini] Pre-created cachedContents resource name to attach to every request (e.g. cachedContents/abc123). Reduces token costs for large fixed context." }
+                }
+              }
+            }
+          }
+        },
+        "standaloneAgent.model": {
+          "type": "string",
+          "order": 4,
+          "description": "Model identifier. Set via the sidebar model dropdown (persisted here) or type directly.",
+          "default": ""
+        },
+        "standaloneAgent.streaming": {
+          "type": "boolean",
+          "order": 5,
+          "description": "Stream tokens as they arrive via SSE. Disable for APIs that don't support streaming.",
+          "default": true
+        },
+        "standaloneAgent.toolPermissions": {
+          "type": "object",
+          "order": 6,
+          "markdownDescription": "Permission per tool: `\"allow\"` (run silently), `\"ask\"` (prompt each time), `\"deny\"` (always block).",
+          "default": {
+            "read_file":       "allow",
+            "list_directory":  "allow",
+            "search_files":    "allow",
+            "get_diagnostics": "allow",
+            "write_file":      "ask",
+            "run_terminal":    "ask"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["allow", "ask", "deny"]
+          }
+        },
+        "standaloneAgent.systemPrompt": {
+          "type": "string",
+          "order": 7,
+          "editPresentation": "multilineText",
+          "description": "Custom system prompt override. When non-empty, replaces the built-in prompt for the selected mode.",
+          "default": ""
+        },
+        "standaloneAgent.enterToSend": {
+          "type": "boolean",
+          "order": 8,
+          "description": "When true: Enter sends the message, Shift+Enter inserts a newline. When false: Shift+Enter sends, Enter inserts a newline.",
+          "default": true
+        },
+        "standaloneAgent.maxIterations": {
+          "type": "number",
+          "order": 9,
+          "description": "Maximum agent loop iterations before auto-stopping.",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "standaloneAgent.verboseLogging": {
+          "type": "boolean",
+          "order": 10,
+          "description": "Write full request/response payloads to the Standalone Agent output channel.",
+          "default": false
+        }
+      }
+    }
+  }
+}
