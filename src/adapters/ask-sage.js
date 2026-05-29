@@ -1,48 +1,80 @@
 /**
- * Adapter for Ask Sage native API.
+ * Adapter for the Ask Sage native API.
  *
- * Ask Sage exposes three representations on the same server:
- *   1. Native Ask Sage API  (this adapter, adapter id: "ask-sage")
- *   2. OpenAI-compatible sub-API  (use the openai adapter with pathOverrides)
- *   3. Anthropic-compatible sub-API  (future adapter or openai adapter with translation)
+ * Two-surface architecture:
+ *   User API:   api.asksage.ai/user/  — auth, user management
+ *   Server API: api.asksage.ai/server/ — queries, models
  *
- * For the OpenAI sub-API, configure an endpoint like:
- *   { adapter: "openai", pathOverrides: { chat: "/openai/v1/chat/completions", models: "/openai/v1/models" } }
+ * Auth: x-access-tokens header (token obtained via /user/get-token-with-api-key)
  *
- * TODO (on-site): Document the native Ask Sage API format.
+ * Native /server/query takes a single message string, not a messages array.
+ * Multi-turn history is flattened into one prompt string before sending.
+ * Streaming is not supported on /server/query.
  *
- * Known so far:
- *  - Native endpoint does NOT support streaming.
- *  - Token limits are model-dependent — no static cap to enforce client-side.
- *  - Auth uses the same Bearer token mechanism as OpenAI (verify on-site).
- *
- * adapterOptions:
- *   chatPath    {string}  Path for chat requests. TODO: confirm.
- *   modelsPath  {string}  Path for model list. TODO: confirm.
+ * adapterOptions (all optional):
+ *   persona          {number}    Persona ID
+ *   dataset          {string[]}  Dataset names to query against
+ *   live             {number}    1 = include web search, 0 = off
+ *   limitReferences  {number}    Max RAG references to include
+ *   queryPath        {string}    Override /server/query path
+ *   modelsPath       {string}    Override /server/get-models path
  */
 
 const logger = require('../logger');
-const { nodeRequest, collectBody, authHeaders } = require('./transport');
+const { nodeRequest, collectBody } = require('./transport');
+
+function askSageHeaders(server) {
+    const h = { 'Content-Type': 'application/json' };
+    if (server.apiKey) h['x-access-tokens'] = server.apiKey;
+    return h;
+}
+
+function buildUrl(server, endpoint, key, defaultPath) {
+    const opts = endpoint.adapterOptions || {};
+    const override = opts[key + 'Path'] || (endpoint.pathOverrides || {})[key];
+    return server.url.replace(/\/+$/, '') + (override || defaultPath);
+}
+
+// Ask Sage /server/query takes a single string, not a messages array.
+// Flatten the conversation into one prompt, preserving context.
+function flattenMessages(messages) {
+    const system = messages.find(m => m.role === 'system');
+    const turns  = messages.filter(m => m.role !== 'system');
+
+    const parts = [];
+    if (system?.content) parts.push(system.content);
+
+    if (turns.length === 1 && turns[0].role === 'user') {
+        parts.push(turns[0].content || '');
+    } else {
+        for (const m of turns) {
+            const label = m.role === 'user' ? 'User' : 'Assistant';
+            parts.push(`${label}: ${m.content || ''}`);
+        }
+    }
+
+    return parts.join('\n\n').trim();
+}
 
 module.exports = {
     id: 'ask-sage',
     name: 'Ask Sage (Native)',
 
     async listModels(server, endpoint) {
-        // TODO: Confirm the models endpoint path for Ask Sage native API.
-        const opts = endpoint.adapterOptions || {};
-        const path = opts.modelsPath || (endpoint.pathOverrides || {}).models || '/models';
-        const url  = server.url.replace(/\/+$/, '') + path;
-
+        const url = buildUrl(server, endpoint, 'models', '/server/get-models');
         try {
             logger.log(`[ask-sage] listModels ${url}`);
-            const res = await nodeRequest(url, { headers: authHeaders(server) });
+            const res = await nodeRequest(url, {
+                method: 'POST',
+                headers: askSageHeaders(server),
+                body: JSON.stringify({})
+            });
             if (res.statusCode < 200 || res.statusCode >= 300) {
                 logger.log(`[ask-sage] listModels HTTP ${res.statusCode}`);
                 return [];
             }
             const data = await collectBody(res);
-            const raw = data.data || data.models || [];
+            const raw = data.models || data.data || [];
             return raw
                 .map(m => (typeof m === 'string' ? m : (m.id || m.name || '')))
                 .filter(Boolean)
@@ -53,32 +85,26 @@ module.exports = {
         }
     },
 
-    async chat(server, endpoint, { messages, tools, onToken, signal, sessionState, model }) {
-        // TODO: Confirm Ask Sage native request/response body format.
-        //
-        // Placeholder assumes OpenAI-compatible body since that's the closest
-        // known starting point. Adjust field names, message format, and
-        // response parsing once the actual API is tested on-site.
-        //
-        // Native Ask Sage does not support streaming — onToken is called once
-        // with the full response after it arrives.
-
+    async chat(server, endpoint, { messages, onToken, signal, model }) {
+        const url  = buildUrl(server, endpoint, 'query', '/server/query');
         const opts = endpoint.adapterOptions || {};
-        const path = opts.chatPath || (endpoint.pathOverrides || {}).chat || '/chat/completions';
-        const url  = server.url.replace(/\/+$/, '') + path;
 
-        const body = { model, messages, stream: false, temperature: 0.1 };
-        if (tools && tools.length > 0) {
-            // TODO: Confirm whether Ask Sage native supports tool/function calling.
-            body.tools = tools;
-            body.tool_choice = 'auto';
-        }
+        const body = {
+            message:     flattenMessages(messages),
+            model,
+            temperature: 0.1
+        };
+
+        if (opts.persona         != null) body.persona           = opts.persona;
+        if (opts.dataset         != null) body.dataset            = opts.dataset;
+        if (opts.live            != null) body.live               = opts.live;
+        if (opts.limitReferences != null) body.limit_references   = opts.limitReferences;
 
         logger.verbose('REQUEST', { url, body });
 
         const res = await nodeRequest(url, {
             method: 'POST',
-            headers: authHeaders(server),
+            headers: askSageHeaders(server),
             body: JSON.stringify(body),
             signal
         });
@@ -91,17 +117,11 @@ module.exports = {
         const data = await collectBody(res);
         logger.verbose('RESPONSE', data);
 
-        // TODO: Adjust response parsing for actual Ask Sage response shape.
-        let message;
-        if (data.choices?.[0]?.message) {
-            message = data.choices[0].message;
-        } else {
-            const text = data.text || data.response || data.content || data.answer || '';
-            message = { role: 'assistant', content: text };
-        }
+        const text = data.response || data.message || data.text || data.content || data.answer || '';
+        const reply = { role: 'assistant', content: text };
 
-        if (message.content && onToken) onToken(message.content);
+        if (text && onToken) onToken(text);
 
-        return { message, sessionState: null };
+        return { message: reply, sessionState: null };
     }
 };
