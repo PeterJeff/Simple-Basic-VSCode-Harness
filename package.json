@@ -200,9 +200,15 @@
           "minimum": 1,
           "maximum": 100
         },
-        "standaloneAgent.verboseLogging": {
+        "standaloneAgent.winCertStore": {
           "type": "boolean",
           "order": 10,
+          "description": "Merge Windows system certificate stores (LocalMachine Root + CA) into the HTTPS trust bundle. Required for on-site servers with self-signed or corporate CA certificates. Disable if your endpoints use publicly-trusted certificates and you want to skip the PowerShell cert-read on startup.",
+          "default": true
+        },
+        "standaloneAgent.verboseLogging": {
+          "type": "boolean",
+          "order": 11,
           "description": "Write full request/response payloads to the Standalone Agent output channel.",
           "default": false
         }

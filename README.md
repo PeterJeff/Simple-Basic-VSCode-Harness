@@ -1,14 +1,15 @@
 # Standalone Agent — VSCode Extension
 
-A self-contained, autonomous agentic coding assistant for VS Code. Designed specifically for **air-gapped environments with no internet access and no npm**. All code is plain JavaScript files — no build step, no bundler, no CDN.
+A self-contained, autonomous agentic coding assistant for VS Code. Designed specifically for on-site instant deployment and editing in **air-gapped environments with no internet access and no npm**. All code is plain JavaScript files — no build step, no bundler, no CDN.
+
+Obviously this project was 100% writen by an LLM
 
 ---
 
 ## Requirements
 
-- VS Code 1.80 or later (Node.js 18+ bundled — required for native `fetch`)
-- An OpenAI-compatible LLM API reachable from the machine (e.g. Ollama, vLLM, LM Studio, or a custom server)
-- No npm, no internet required
+- VS Code 1.80 or later (Node.js 18+ comes bundled inside vscode — required for native `fetch`)
+- An OpenAI-compatible LLM API reachable from the machine (e.g. Ollama, vLLM, LM Studio, something running on localhost or a custom server)
 
 ---
 
@@ -18,6 +19,8 @@ A self-contained, autonomous agentic coding assistant for VS Code. Designed spec
 2. Open the folder in VS Code.
 3. Press **F5** to launch the Extension Development Host (for dev/testing), **or** package it as a `.vsix` if you have `vsce` available.
 4. The **Standalone Agent** icon appears in the activity bar.
+
+You can also use CTRL + SHIFT + P and use `Developer: Install Extension from location`
 
 ### Optional: Better Markdown Rendering
 
@@ -40,20 +43,20 @@ Drop [`marked.min.js`](https://github.com/markedjs/marked/releases) into the `me
 ## UI Reference
 
 ```
-┌─────────────────────────────────────────┐
+┌────────────────────────────────────────────┐
 │ [Mode▼] [Endpoint▼] [Model▼] [⟳] [☰] [⚙] │  ← Toolbar
-├─────────────────────────────────────────┤
-│                                         │
-│  messages…                              │  ← Chat area
-│                                         │
-├─────────────────────────────────────────┤
-│ Agent (step 2/20)…          [■ Stop]    │  ← Status bar
-├─────────────────────────────────────────┤
-│ ┌─────────────────────────────────────┐ │
+├────────────────────────────────────────────┤
+│                                            │
+│  messages…                                 │  ← Chat area
+│                                            │
+├────────────────────────────────────────────┤
+│ Agent (step 2/20)…          [■ Stop]       │  ← Status bar
+├────────────────────────────────────────────┤
+│ ┌──────────────────────────────────────┐   │
 │ │ Type a message… (@ for file ref)   │ │  ← Input
-│ └─────────────────────────────────────┘ │
-│ [MD] [Stream] ──────────────────── [➤] │  ← Toggles + send
-└─────────────────────────────────────────┘
+│ └──────────────────────────────────────┘   │
+│ [MD] [Stream] ──────────────────── [➤]    │  ← Toggles + send
+└────────────────────────────────────────────┘
 ```
 
 **Toolbar icons:**
@@ -74,6 +77,13 @@ Drop [`marked.min.js`](https://github.com/markedjs/marked/releases) into the `me
 |--------|--------|
 | MD | Toggle markdown rendering. Re-renders entire conversation. |
 | Stream | Toggle streaming SSE responses. |
+
+**Per-message actions:**
+| Action | How |
+|--------|-----|
+| Copy message | Copy button on each message bubble |
+| Copy code block | Copy button in the top-right of every code block |
+| Edit / Fork | Edit button on user messages — restores the message to the input box and creates a branching conversation from that point |
 
 ---
 
@@ -126,29 +136,126 @@ All settings are under the `standaloneAgent` namespace in VS Code settings.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `endpoints` | array | `[{name:"Local", url:"http://localhost:11434/v1"}]` | LLM API endpoints. Each: `{ name, url, apiKey?, type }` |
-| `activeEndpoint` | string | `"Local"` | Name of the active endpoint |
+| `servers` | array | see below | Physical server instances. Each: `{ name, url, apiKey? }` |
+| `endpoints` | array | see below | Logical endpoints — each combines a server with an adapter and optional overrides |
+| `activeEndpoint` | string | `"Local OpenAI"` | Name of the active endpoint (must match a name in `endpoints`) |
 | `model` | string | `""` | Model identifier (set via dropdown or settings) |
 | `streaming` | boolean | `true` | Enable SSE streaming responses |
 | `enterToSend` | boolean | `true` | `true` = Enter sends, Shift+Enter = newline. `false` = Shift+Enter sends, Enter = newline |
+| `winCertStore` | boolean | `true` | Merge Windows system CA certificates into the HTTPS trust bundle (see TLS section) |
 | `verboseLogging` | boolean | `false` | Log full request/response payloads to the output channel |
 | `maxIterations` | number | `20` | Max agent loop iterations before auto-stop |
 | `systemPrompt` | string | `""` | Custom system prompt override (replaces built-in mode prompts when set) |
-| `toolPermissions` | object | see above | Per-tool permission: `"allow"`, `"ask"`, or `"deny"` |
+| `toolPermissions` | object | see Tools | Per-tool permission: `"allow"`, `"ask"`, or `"deny"` |
+
+### Server Configuration
+
+`standaloneAgent.servers` defines physical server instances. These are referenced by endpoints.
+
+```json
+[
+  {
+    "name": "Local",
+    "url": "http://localhost:11434/v1",
+    "apiKey": ""
+  }
+]
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Unique display name — referenced by endpoints' `server` field |
+| `url` | yes | Base URL of the server (e.g. `http://192.168.1.50:8080/v1`) |
+| `apiKey` | no | Bearer token / API key. Leave empty if not required. |
 
 ### Endpoint Configuration
 
-Each endpoint object:
+`standaloneAgent.endpoints` defines logical endpoints — each binds a server to a protocol adapter and optional per-endpoint overrides.
+
+```json
+[
+  {
+    "name": "Local OpenAI",
+    "server": "Local",
+    "adapter": "openai"
+  }
+]
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Unique display name shown in the endpoint dropdown |
+| `server` | yes | Must match a `name` in `standaloneAgent.servers` |
+| `adapter` | yes | Protocol adapter: `"openai"`, `"gemini"`, `"gemini-jank"`, or `"ask-sage"` |
+| `streaming` | no | Per-endpoint streaming override. Omit to use the global `streaming` setting. |
+| `model` | no | Per-endpoint model override. Omit to use the sidebar model selector. |
+| `pathOverrides` | no | Override URL paths for non-standard deployments (see below) |
+| `adapterOptions` | no | Adapter-specific tuning options (see Adapters section) |
+
+**`pathOverrides`** — useful when an API mounts its routes at non-standard paths:
 ```json
 {
-  "name": "My Server",
-  "url": "http://192.168.1.50:8080/v1",
-  "apiKey": "optional-key",
-  "type": "openai"
+  "chat":   "/openai/v1/chat/completions",
+  "models": "/openai/v1/models"
 }
 ```
 
-`type` must always be `"openai"` (OpenAI-compatible API). The extension calls `/v1/chat/completions` for inference and `/v1/models` for model listing.
+---
+
+## Adapters
+
+### `openai` — OpenAI-Compatible API
+
+Calls `/v1/chat/completions` and `/v1/models`. Works with Ollama, vLLM, LM Studio, and any OpenAI-compatible server.
+
+No `adapterOptions`. Use `pathOverrides` if the server mounts at non-standard paths.
+
+### `gemini` — Google Gemini API
+
+Calls Google's native Gemini API format (not OpenAI-compatible).
+
+`adapterOptions`:
+| Option | Default | Description |
+|--------|---------|-------------|
+| `apiVersion` | `"v1"` | API version path segment. Use `"v1beta"` for preview features. |
+| `useQueryKey` | `false` | Pass the API key as `?key=` query param instead of the `x-goog-api-key` header. |
+| `cachedContent` | — | Pre-created `cachedContents` resource name (e.g. `cachedContents/abc123`). Reduces token costs for large fixed context. |
+
+### `gemini-jank` — Internal Gemini Proxy
+
+Works around on-site Gemini proxy quirks: collapses the full conversation into a single XML-formatted user message, handles server-side session state, and applies a minimum word count if the proxy rejects short requests.
+
+`adapterOptions`:
+| Option | Default | Description |
+|--------|---------|-------------|
+| `sessionField` | `"session_id"` | Response/request field for the session ID |
+| `modelField` | `"model"` | Request field for the model name |
+| `minWordCount` | `0` (disabled) | Minimum word count for collapsed messages |
+| `systemTag` | `"SystemPrompt"` | XML tag wrapping the system prompt |
+| `historyTag` | `"ConversationHistory"` | XML tag wrapping conversation history |
+| `currentTag` | `"CurrentRequest"` | XML tag wrapping the current request |
+
+### `ask-sage` — Ask Sage
+
+Ask Sage exposes three API surfaces on the same server:
+
+| Surface | How to connect |
+|---------|----------------|
+| OpenAI sub-API | Use `adapter: "openai"` with `pathOverrides` pointing to `/openai/v1/...` |
+| Native Ask Sage API | Use `adapter: "ask-sage"` |
+| Anthropic sub-API | Use `adapter: "openai"` with `pathOverrides` (Claude-format assumed compatible) |
+
+The `ask-sage` native adapter does not support streaming. No `adapterOptions` currently.
+
+---
+
+## TLS / Self-Signed Certificates
+
+When connecting to on-site servers over HTTPS with self-signed certificates, the extension automatically reads the Windows system certificate store (Root and CA stores) and merges those certificates into Node's trust bundle. No manual cert configuration required — if your machine trusts the server's cert, the extension will too.
+
+This is enabled by default and runs once per session (the result is cached). Set `standaloneAgent.winCertStore` to `false` if your endpoints use publicly-trusted certificates and you want to skip the startup PowerShell cert-read. Changing the setting takes effect immediately without restarting VS Code.
+
+This only applies on Windows and falls back silently on other platforms.
 
 ---
 
@@ -178,5 +285,6 @@ Verbose logging (toggle via command palette: "Standalone Agent: Toggle Verbose L
 - **No bundled syntax highlighting.** Code blocks in markdown responses are displayed without language-specific syntax colors unless you add a highlighting library to `media/`.
 - **Tool call format requires function calling support.** The model must support OpenAI-compatible `tools` / `tool_calls` in the response. Models that only support plain text will not be able to use tools (they will still work in Chat mode).
 - **Streaming partial JSON.** Some APIs send tool call arguments split across multiple stream chunks. The client reassembles these, but a very unusual chunk boundary could cause a parse failure. Disable streaming as a workaround.
+- **Ask Sage native adapter is provisional.** The `ask-sage` adapter contains placeholder logic pending on-site API verification. Use the OpenAI sub-API path with `adapter: "openai"` and `pathOverrides` for a confirmed working connection.
 - **No subagent / parallel processing** (planned — see ARCHITECTURE.md).
 - **No vector search / embeddings** (planned).

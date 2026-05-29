@@ -8,6 +8,14 @@ const path = require('path');
 const logger = require('./logger');
 
 let _agent = null;
+let _enabled = true;
+
+function configure({ enabled }) {
+    if (enabled !== _enabled) {
+        _enabled = enabled;
+        _agent = null; // force rebuild on next use
+    }
+}
 
 function loadWindowsCerts() {
     // Write the script to a temp file to avoid PowerShell command-line quoting issues
@@ -49,7 +57,7 @@ function buildAgent() {
     const builtinCerts = tls.rootCertificates ? [...tls.rootCertificates] : [];
 
     let allCerts = builtinCerts;
-    if (process.platform === 'win32') {
+    if (_enabled && process.platform === 'win32') {
         try {
             const winCerts = loadWindowsCerts();
             allCerts = [...builtinCerts, ...winCerts];
@@ -73,4 +81,4 @@ function getHttpsAgent() {
 /** Call on extension deactivate if you want to force a re-read on next activation. */
 function resetAgent() { _agent = null; }
 
-module.exports = { getHttpsAgent, resetAgent };
+module.exports = { getHttpsAgent, resetAgent, configure };

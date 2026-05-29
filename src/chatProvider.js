@@ -7,6 +7,7 @@ const agentRunner = require('./agentRunner');
 const toolHandler = require('./toolHandler');
 const HistoryManager = require('./historyManager');
 const logger = require('./logger');
+const certLoader = require('./certLoader');
 
 class ChatViewProvider {
     constructor(context) {
@@ -17,6 +18,7 @@ class ChatViewProvider {
         this._mode = 'chat';
         this._streamMsgId = '';
         this._sessionState = null; // ephemeral adapter state (e.g. session ID for gemini-jank)
+        certLoader.configure({ enabled: api.getConfig().get('winCertStore', true) });
     }
 
     // ── VSCode webview lifecycle ───────────────────────────────────────────────
@@ -62,6 +64,7 @@ class ChatViewProvider {
 
     onConfigChange() {
         const cfg = api.getConfig();
+        certLoader.configure({ enabled: cfg.get('winCertStore', true) });
         this.sendToWebview({
             type: 'configUpdate',
             endpoints: api.getEndpoints(),
