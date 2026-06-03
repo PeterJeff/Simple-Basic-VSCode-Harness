@@ -2,7 +2,7 @@
 
 A self-contained, autonomous agentic coding assistant for VS Code. Designed specifically for on-site instant deployment and editing in **air-gapped environments with no internet access and no npm**. All code is plain JavaScript files — no build step, no bundler, no CDN.
 
-Obviously this project was 100% writen by an LLM
+Obviously this project was 100% written by an LLM
 
 ---
 
@@ -21,10 +21,6 @@ Obviously this project was 100% writen by an LLM
 4. The **Standalone Agent** icon appears in the activity bar.
 
 You can also use CTRL + SHIFT + P and use `Developer: Install Extension from location`
-
-### Optional: Better Markdown Rendering
-
-Drop [`marked.min.js`](https://github.com/markedjs/marked/releases) into the `media/` folder. The extension detects it at startup and uses it instead of the built-in fallback renderer. Single file, MIT license, no sub-dependencies.
 
 ---
 
@@ -97,10 +93,12 @@ Drop [`marked.min.js`](https://github.com/markedjs/marked/releases) into the `me
 Single-pass Q&A. No tools. Fastest, lowest token cost. Good for questions, explanations, code review.
 
 ### Plan
-Read-only analysis mode. The agent can call `read_file`, `list_directory`, `search_files`, and `get_diagnostics` but **cannot write files or run commands**. Produces a numbered step-by-step plan and stops. Approve the plan manually before switching to Agent mode to execute it.
+Read-only analysis mode. The agent can call `read_file`, `list_directory`, `search_files`, `get_diagnostics`, `get_git_diff`, and `get_symbols` but **cannot write files or run commands**. Produces a numbered step-by-step plan and stops. Approve the plan manually before switching to Agent mode to execute it.
 
 ### Agent
 Full autonomous loop. The agent can call all tools and will keep iterating (up to `maxIterations`) until the task is complete or it has nothing more to do. Each tool call is shown inline in the chat with collapsible args/result.
+
+While a run is active the VS Code status bar shows the current step (e.g. *"Standalone Agent: Running tool: edit_file…"*) and a **Cancel** button — the agent stays visible even when the chat panel is collapsed.
 
 ---
 
@@ -108,18 +106,21 @@ Full autonomous loop. The agent can call all tools and will keep iterating (up t
 
 | Tool | Description | Default Permission |
 |------|-------------|--------------------|
-| `read_file` | Read a file's contents | allow |
+| `read_file` | Read a file's contents (prefers open editor buffer — includes unsaved changes) | allow |
 | `list_directory` | List directory entries | allow |
-| `search_files` | Regex search across workspace files | allow |
+| `search_files` | Regex search across workspace files (searches open buffers too) | allow |
 | `get_diagnostics` | Get VS Code errors/warnings | allow |
-| `write_file` | Write or overwrite a file | ask |
+| `get_git_diff` | Show uncommitted changes via VS Code git extension or `git diff` | allow |
+| `get_symbols` | File symbol outline via VS Code language server | allow |
+| `edit_file` | Replace an exact string in a file — uses WorkspaceEdit, preserves undo history | ask |
+| `write_file` | Write or overwrite a file — uses WorkspaceEdit for open files, preserves undo history | ask |
 | `run_terminal` | Run a command and capture its output | ask |
 
-**`run_terminal` output capture:** The tool runs the command via Node's `child_process.exec` in the workspace root, capturing stdout and stderr directly. The integrated terminal also shows the command for visibility. Increase `timeout_ms` for slow commands:
+**`edit_file`** uses `vscode.workspace.openTextDocument` to get the in-memory document (including unsaved edits), then applies the change via `vscode.WorkspaceEdit`. This means the edit appears as a normal undo-able keystroke in VS Code. The file is saved automatically after the edit. The `⊕ Diff` button on a completed edit/write tool card opens a native side-by-side git diff view.
 
-```
-run_terminal({ command: "npm install", timeout_ms: 30000 })
-```
+**`write_file`** behaves the same way for files that are already open in an editor. For new or non-open files it uses `vscode.workspace.fs.writeFile`, which works across remote sessions, WSL, and Dev Containers.
+
+**`run_terminal`** uses VS Code's Shell Integration API (VS Code 1.93+) when available — the command runs exactly once inside the integrated terminal and output is captured natively. On older VS Code versions it falls back to `child_process.exec` for output capture (terminal is shown but the command is not echoed into it to avoid running it twice).
 
 **Permission levels:**
 - `allow` — runs silently with no prompt
@@ -141,7 +142,7 @@ When a tool has `ask` permission, an approval card is rendered inline in the cha
 
 If the agent issues multiple tool calls in a single response (e.g. reading several files at once), each call gets its own approval card simultaneously. All cards can be acted on independently — approved calls execute in parallel as soon as their card is resolved.
 
-**Background notification:** If the chat panel is not visible and an approval card is waiting, a non-modal toast notification appears after 3 seconds reading *"Standalone Agent: approve 'toolName' in chat"* with a **Focus Chat** button that brings the panel into view. The notification only appears if you haven't already responded via the card.
+**Background notification:** If the chat panel is not visible and an approval card is waiting, a non-modal toast notification appears after 3 seconds reading *"Standalone Agent: approve 'toolName' in chat"* with a **Focus Chat** button that brings the panel into view.
 
 ---
 
@@ -149,7 +150,15 @@ If the agent issues multiple tool calls in a single response (e.g. reading sever
 
 Type `@` in the input to trigger file autocomplete. As you type `@src/foo`, a dropdown appears with matching workspace files. Select with arrow keys + Enter/Tab or click. The selected file path is inserted as `@path/to/file`.
 
-When you send, the extension reads the file contents and injects them into the API message as `<file path="...">content</file>` blocks. The display message shows only the original text with a "📎 filename" indicator.
+When you send, the extension reads the file contents (preferring the open editor buffer, so unsaved changes are included) and injects them into the API message as `<file path="...">content</file>` blocks. The display message shows only the original text with a "📎 filename" indicator.
+
+---
+
+## Markdown Rendering
+
+Markdown is rendered using VS Code's built-in `markdown.api.render` command — the same engine that powers VS Code's own Markdown preview. This provides zero-dependency, XSS-safe rendering with full GFM support. After each streaming response completes, the extension re-renders the full message server-side and pushes the final HTML to the webview. During streaming, a lightweight client-side renderer provides live preview.
+
+Toggle the **MD** button in the input row to switch between rendered and raw text views.
 
 ---
 
@@ -161,7 +170,7 @@ All settings are under the `standaloneAgent` namespace in VS Code settings.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `servers` | array | see below | Physical server instances. Each: `{ name, url, apiKey? }` |
+| `servers` | array | see below | Physical server instances. Each: `{ name, url }` — API keys are stored separately in secure storage |
 | `endpoints` | array | see below | Logical endpoints — each combines a server with an adapter and optional overrides |
 | `activeEndpoint` | string | `"Local OpenAI"` | Name of the active endpoint (must match a name in `endpoints`) |
 | `model` | string | `""` | Model identifier (set via dropdown or settings) |
@@ -181,8 +190,7 @@ All settings are under the `standaloneAgent` namespace in VS Code settings.
 [
   {
     "name": "Local",
-    "url": "http://localhost:11434/v1",
-    "apiKey": ""
+    "url": "http://localhost:11434/v1"
   }
 ]
 ```
@@ -191,7 +199,8 @@ All settings are under the `standaloneAgent` namespace in VS Code settings.
 |-------|----------|-------------|
 | `name` | yes | Unique display name — referenced by endpoints' `server` field |
 | `url` | yes | Base URL of the server (e.g. `http://192.168.1.50:8080/v1`) |
-| `apiKey` | no | Bearer token / API key. Leave empty if not required. |
+
+**API keys** are stored in VS Code's secure credential store (Windows Credential Manager / macOS Keychain) — **not** in `settings.json`. Enter the key in the server edit form (⚙ → Servers → edit). Existing users: any `apiKey` value found in `settings.json` on first load is automatically migrated to secure storage and removed from the file.
 
 ### Endpoint Configuration
 
@@ -272,7 +281,7 @@ Ask Sage exposes three API surfaces on the same server:
 
 The `ask-sage` native adapter uses the `/server/query` endpoint. Streaming is not supported (the full response is returned in one call). Multi-turn conversation history is sent as a `[{user, message}]` array; single-turn messages are sent as a plain string.
 
-Auth: set `apiKey` on the server to the `x-access-tokens` value obtained from `/user/get-token-with-api-key`.
+Auth: set the API key for the server in the Settings panel (⚙ → Servers → edit). It is stored securely in the OS keychain and maps to the `x-access-tokens` header. Obtain the token value from `/user/get-token-with-api-key`.
 
 `adapterOptions`:
 | Option | Type | Description |
@@ -326,10 +335,11 @@ Verbose logging (toggle via command palette: "Standalone Agent: Toggle Verbose L
 
 ## Limitations / Known Issues
 
-- **No bundled syntax highlighting.** Code blocks in markdown responses are displayed without language-specific syntax colors unless you add a highlighting library to `media/`.
+- **No bundled syntax highlighting.** Code blocks in markdown responses are displayed without language-specific syntax colors. Drop `highlight.min.js` and a theme CSS into `media/` and call `hljs.highlightAll()` after rendering for full highlighting.
 - **Tool call format requires function calling support.** The model must support OpenAI-compatible `tools` / `tool_calls`. Use **TC:TXT** mode (prompt injection) as a fallback for models that only output plain text.
 - **Streaming partial JSON.** Some APIs send tool call arguments split across multiple stream chunks. The client reassembles these, but an unusual chunk boundary could cause a parse failure. Disable streaming as a workaround.
 - **Multiple parallel tool calls.** When the agent emits several tool calls in one response, approval cards and execution all run in parallel. The agent system prompt encourages this pattern for efficiency.
+- **Shell Integration for terminal capture** requires VS Code 1.93+ and a shell that supports shell integration (bash, zsh, pwsh). On older versions or unsupported shells, the fallback `child_process.exec` captures output invisibly — the terminal panel is shown but does not echo the command.
 - **Ask Sage `usage` field names are not in the public spec.** Token/cost sub-fields inside the `usage` object are discovered empirically. Enable verbose logging and inspect the RESPONSE log after your first query to confirm the field names your deployment returns.
 - **No subagent / parallel processing** (planned).
 - **No vector search / embeddings** (planned).

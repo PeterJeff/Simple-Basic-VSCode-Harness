@@ -17,18 +17,20 @@ basic interface/
 ├── src/                      Extension host modules (Node.js context, full API access)
 │   ├── logger.js             Output channel wrapper + verbose flag.
 │   ├── historyManager.js     Chat session CRUD via ExtensionContext.globalState.
-│   ├── apiClient.js          HTTP client for OpenAI-compatible APIs. Streaming + model list.
-│   ├── toolHandler.js        Tool definitions (OpenAI format) + permission gating + execution.
+│   ├── apiClient.js          HTTP client. Resolves active server/endpoint, injects API
+│   │                         key from OS keychain at request time.
+│   ├── toolHandler.js        Tool definitions (OpenAI format) + permission gating +
+│   │                         execution. Uses VS Code APIs (workspace.fs, WorkspaceEdit,
+│   │                         shell integration) rather than raw Node fs/child_process.
 │   ├── agentRunner.js        The agent loop. Drives Chat/Plan/Agent modes.
-│   └── chatProvider.js       WebviewViewProvider. Owns the webview, coordinates all modules.
+│   └── chatProvider.js       WebviewViewProvider. Owns the webview, coordinates all
+│                             modules, manages secure key storage and markdown rendering.
 │
 └── media/                    Webview assets (sandboxed browser context, NO Node.js APIs)
     ├── chat.js               Entire webview UI — builds DOM, handles all user interaction,
     │                         renders messages, manages panels (chat/history/settings).
     ├── chat.css              VSCode-variable-based styles for all UI components.
-    ├── icon.svg              Activity bar icon (SVG, currentColor).
-    └── marked.min.js         OPTIONAL. Drop here for full markdown rendering.
-                              If absent, the built-in fallback renderer is used.
+    └── icon.svg              Activity bar icon (SVG, currentColor).
 ```
 
 ---
@@ -97,17 +99,34 @@ Singleton (exported object). All HTTP calls go through here.
 Key functions:
 - `chat({ messages, tools, onToken, signal })` — main inference call. Streams if `onToken` is provided AND `standaloneAgent.streaming` is true. Returns a full `{ role, content, tool_calls? }` message object.
 - `listModels()` — GET `/models`, returns sorted string array of model IDs.
-- `getActiveEndpoint()` — resolves current endpoint from config.
+- `setSecrets(secrets)` — called once at startup with `context.secrets`. Enables secure key resolution.
+- `resolveActive()` — resolves current `{ server, endpoint, adapter }` from config.
 - `getConfig()` — shorthand for `vscode.workspace.getConfiguration('standaloneAgent')`.
+
+**Secure key injection:** `_withKey(server)` is called inside `chat()` and `listModels()`. It reads the API key for the server from `context.secrets` (OS keychain) and merges it into the server object before passing to the adapter. The key never appears in `settings.json`.
 
 Streaming implementation: reads `response.body.getReader()`, parses SSE `data:` lines, reassembles tool call deltas from `delta.tool_calls[].index`. Returns a complete assembled message at the end.
 
 ### `src/toolHandler.js`
-Singleton. Owns tool definitions (`ALL_TOOLS`) and execution.
+Singleton. Owns tool definitions (`ALL_TOOLS`) and execution. Uses VS Code APIs throughout — no raw `fs` module.
 
 - `getDefinitions(mode)` — returns tool array filtered by mode: `chat` → `[]`, `plan` → read-only subset, `agent` → all tools.
 - `execute(toolName, args)` — checks permission, then runs `_run()`. Returns a plain object result (or `{ error: string }` on failure/denial).
-- `checkPermission(toolName)` — reads `standaloneAgent.toolPermissions[toolName]`. If `'ask'`, shows a VS Code modal; "Allow Always" updates the config.
+- `requestApproval(toolName, ...)` — reads `standaloneAgent.toolPermissions[toolName]`. If `'ask'`, delegates to the in-chat approval callback (registered by chatProvider). "Allow Always" updates config.
+
+**Tool implementations:**
+
+| Tool | Implementation notes |
+|------|---------------------|
+| `read_file` | `vscode.workspace.textDocuments` first (includes unsaved edits), then `workspace.fs.readFile` |
+| `write_file` | `WorkspaceEdit` if file is open (preserves undo); `workspace.fs.writeFile` + `createDirectory` for new files |
+| `list_directory` | `workspace.fs.readDirectory` — works across local, remote, WSL, and Dev Container filesystems |
+| `search_files` | `workspace.findFiles` for discovery; reads each via open doc buffer or `workspace.fs` |
+| `get_diagnostics` | `vscode.languages.getDiagnostics` |
+| `edit_file` | `openTextDocument` (in-memory content) + `WorkspaceEdit.replace` — auto-saves after apply |
+| `get_git_diff` | VS Code git extension API (`repo.diff()`) for full-workspace diffs; `child_process.execFile('git')` fallback for path-scoped diffs |
+| `run_terminal` | Shell Integration API (`terminal.shellIntegration.executeCommand`) if VS Code 1.93+; `child_process.exec` fallback — in both cases the command executes exactly once |
+| `get_symbols` | `vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri)` |
 
 Adding a new tool:
 1. Add a new entry to `ALL_TOOLS` with the OpenAI function-calling schema.
@@ -116,16 +135,17 @@ Adding a new tool:
 4. If read-only, add the name to `READ_ONLY_TOOLS` so it's available in Plan mode.
 
 ### `src/agentRunner.js`
-Singleton. Drives the agent loop. Calls `api.chat()`, handles tool calls via `toolHandler.execute()`, manages `AbortController` for stop.
+Singleton. Drives the agent loop. Calls `api.chat()`, handles tool calls via `toolHandler`, manages `AbortController` for stop.
 
 **Loop flow (per iteration):**
 1. Generate `msgId = "a_<timestamp>_<iteration>"`
 2. Call `onMessageStart(msgId)` — tells provider to create a new assistant message element
 3. Call `api.chat()` — with or without streaming
 4. Call `onStreamEnd()` — finalizes the streaming message
-5. If `assistantMsg.tool_calls` is populated, loop over them calling `onToolStart` → `toolHandler.execute()` → `onToolEnd`
-6. Push `tool` role messages into `runMessages` for next iteration
-7. If no tool calls (or `plan` mode): break
+5. Phase 1: call `toolHandler.requestApproval()` for all tool calls simultaneously (pre-approved tools resolve instantly; `ask` tools show in-chat cards)
+6. Phase 2: execute all approved tools in parallel via `toolHandler.executeDirect()`
+7. Push `tool` role messages into `runMessages` for next iteration
+8. If no tool calls (or `plan` mode): break
 
 **Callbacks passed by chatProvider:**
 ```js
@@ -134,14 +154,16 @@ Singleton. Drives the agent loop. Calls `api.chat()`, handles tool calls via `to
   onToken(text)                  // streaming token
   onStreamEnd()                  // streaming complete
   onToolStart({ msgId, id, name, args })
+  onToolDenied({ msgId, id, name, args })
   onToolEnd({ msgId, id, name, args, result })
-  onStatus(text)                 // status bar text
-  onComplete(messages)           // final messages array (sans system msg)
-  onError(errorString)           // fatal error
+  onStatus(text)                 // status bar + progress bar text
+  onUsage({ usage, uuid, msgId })
+  onComplete({ messages, sessionState })
+  onError(errorString)
 }
 ```
 
-`onComplete` always fires, even if stopped. `messages` param contains the full updated history.
+`onComplete` always fires, even if stopped. `messages` contains the full updated history (system message excluded).
 
 **Mode behavior:**
 - `chat`: No tools. Single pass.
@@ -157,11 +179,15 @@ Key responsibilities:
 - `resolveWebviewView()` — called by VS Code when the sidebar is shown. Sets up webview options (CSP, allowed resources), generates HTML, wires `onDidReceiveMessage`.
 - `_handleWebviewMessage(msg)` — dispatches all messages from the webview. See message protocol below.
 - `_handleUserMessage(text)` — resolves `@` refs, appends to session, fires `agentRunner.run()`.
-- `_buildHtml(webview)` — generates the HTML shell. Injects CSP nonce, asset URIs. Checks if `marked.min.js` exists and conditionally adds a `<script>` tag.
-- `_resolveAtRefs(text)` — extracts `@path` tokens, reads each file, returns `{ displayText, contextBlocks[] }`.
+- `_buildHtml(webview)` — generates the HTML shell. Injects CSP nonce and asset URIs. No external script tags beyond `chat.js`.
+- `_resolveAtRefs(text)` — extracts `@path` tokens. Checks `vscode.workspace.textDocuments` first (in-memory, includes unsaved edits), falls back to `workspace.fs.readFile`.
+- `_runAgent()` — wraps the agent run in `vscode.window.withProgress` (Window location, cancellable). Accumulates streaming tokens in `_streamBuffers`; after `streamEnd` renders the full text via `vscode.commands.executeCommand('markdown.api.render', text)` and pushes the safe HTML to the webview as `renderedMarkdown`.
+- `_migrateApiKeys()` — runs once at startup. Reads any `apiKey` fields from `standaloneAgent.servers` in settings, stores them in `context.secrets`, then removes them from the config.
+- `_getServersForWebview()` — returns servers with `apiKey` stripped and a `hasKey: boolean` added (async — queries secrets).
+- `_updateSetting('servers', ...)` — extracts `apiKey` values, stores in secrets, saves config without keys.
 - `newChat()`, `clearHistory()`, `onConfigChange()` — called by commands registered in `extension.js`.
 
-`_streamMsgId` tracks the ID of the currently-streaming assistant message. Updated by `onMessageStart` callback from agentRunner (not by the provider itself).
+`_streamMsgId` tracks the ID of the currently-streaming assistant message. `_streamBuffers` is a `Map<msgId, string>` for token accumulation.
 
 ---
 
@@ -184,29 +210,42 @@ All cross-boundary communication uses `JSON` objects passed via `postMessage`.
 | `loadSession` | `{ id }` | Load a history session |
 | `deleteSession` | `{ id }` | Delete a history session |
 | `getFileSuggestions` | `{ query }` | @ autocomplete query |
+| `fork` | `{ userMsgIdx }` | Edit/fork conversation from a past user message |
+| `retry` | — | Retry last assistant turn |
 | `updateToolPermission` | `{ tool, level }` | Permission changed in settings panel |
-| `updateSetting` | `{ key, value }` | Generic setting update |
+| `updateSetting` | `{ key, value }` | Generic setting update (servers array: apiKey extracted → secrets) |
+| `getMonthlyUsage` | — | Force monthly usage refresh |
+| `toolApprovalResponse` | `{ callId, decision }` | User responded to an approval card |
+| `openTextWindow` | `{ content }` | Open raw tool call JSON in an editor tab |
+| `showDiff` | `{ path }` | Open native git diff (git.openChange) for a file |
 | `openSettings` | — | Open VS Code settings UI |
 
 ### Extension Host → Webview
 
 | `type` | Payload | Description |
 |--------|---------|-------------|
-| `init` | `{ sessions, session, mode, endpoints, activeEndpoint, model, streaming, enterToSend, verboseLogging, maxIterations, toolPermissions, toolDefs }` | Full initial state |
+| `init` | `{ sessions, session, mode, servers, endpoints, activeEndpoint, model, streaming, enterToSend, verboseLogging, maxIterations, toolPermissions, toolDefs, askSageToolMode, supportsMonthlyUsage }` | Full initial state |
 | `configUpdate` | subset of init fields | Config changed externally |
 | `verboseState` | `{ verbose }` | Verbose toggle changed via command |
 | `newChat` | — | Reset chat area |
-| `userMessage` | `{ id, text, contextFiles[] }` | Display a user message |
-| `assistantStart` | `{ id }` | Create a new (empty) assistant message element |
+| `userMessage` | `{ id, ts, text, contextFiles[] }` | Display a user message |
+| `assistantStart` | `{ id, ts }` | Create a new (empty) assistant message element |
 | `token` | `{ id, text }` | Append a streaming token to message `id` |
 | `streamEnd` | `{ id }` | Finalize the streaming message `id` |
-| `toolStart` | `{ msgId, call: { msgId, id, name, args } }` | Show a tool call (running state) |
-| `toolEnd` | `{ msgId, call: { msgId, id, name, args, result } }` | Update tool call with result |
-| `status` | `{ text }` | Update status bar text |
+| `renderedMarkdown` | `{ id, html }` | Replace client-rendered markdown with VS Code-rendered HTML |
+| `usage` | `{ msgId, usage, uuid }` | Token/cost usage badge data |
+| `monthlyUsage` | `{ data }` or `{ error }` | Monthly usage bar data |
+| `toolApprovalRequest` | `{ callId, toolName, args, rawCall, msgId }` | Show an approval card |
+| `toolStart` | `{ msgId, call }` | Show a tool call (running state) |
+| `toolDenied` | `{ msgId, call }` | Mark tool call as denied |
+| `toolEnd` | `{ msgId, call }` | Update tool call with result (add ⊕ Diff button for write/edit) |
+| `clearApprovals` | — | Remove all pending approval cards (on stop/new chat) |
+| `status` | `{ text }` | Update status bar text (also reflected in VS Code progress bar) |
 | `done` | — | Agent run complete, re-enable input |
 | `error` | `{ text }` | Show an error message, re-enable input |
 | `sessions` | `{ sessions[] }` | Updated session list |
 | `loadSession` | `{ session }` | Load and render a session's messages |
+| `forkReady` | `{ session }` | Fork complete, re-render truncated history |
 | `models` | `{ models[], current }` | Populate model dropdown |
 | `fileSuggestions` | `{ files[], query }` | @ autocomplete results |
 
@@ -221,34 +260,38 @@ The webview builds its entire DOM via `document.body.innerHTML = ...` at load ti
 state = {
   mode, isProcessing, markdownEnabled, streamingEnabled, verbose,
   sessions[], messages[], toolPermissions{}, toolDefs[],
-  endpoints[], activeEndpoint, models[], currentModel,
+  servers[], endpoints[], activeEndpoint, models[], currentModel,
   atQuery, atCursorStart, atDropdownItems[], atSelectedIdx,
-  enterToSend   // bool: true = Enter sends; false = Shift+Enter sends
+  enterToSend,         // bool: true = Enter sends; false = Shift+Enter sends
+  toolCallMode,        // 'api' | 'prompt'
+  supportsMonthlyUsage,
+  usageByMsgId{}       // keyed by msgId → { usage, uuid }
 }
 ```
 
 **Message display format (internal to webview):**
 ```js
 // User message
-{ id, role: 'user', raw: string, contextFiles: string[] }
+{ id, role: 'user', raw: string, contextFiles: string[], ts: number }
 
 // Assistant message
-{ id, role: 'assistant', raw: string, toolCalls: ToolCall[], pending: bool }
+{ id, role: 'assistant', raw: string, renderedHtml?: string, toolCalls: ToolCall[], pending: bool, ts: number }
 
 // Error display
 { id, role: 'error', raw: string }
 ```
 
-`raw` is always the unrendered source text. Markdown/plain rendering is applied at display time so the toggle can re-render without data loss.
+`raw` is always the unrendered source text. `renderedHtml` is populated when the extension sends a `renderedMarkdown` message. Markdown rendering priority on display:
+1. `renderedHtml` (VS Code `markdown.api.render` output) — used when available and MD toggle is on
+2. `renderMarkdown(raw)` — client-side fallback using `builtinMd()` (handles code blocks, headers, bold/italic, lists, links, blockquotes, HR)
+3. `<pre>raw</pre>` — when MD toggle is off
 
 **Tool call display format:**
 ```js
 { id, name, args, result, done: bool }
 ```
 
-**Markdown rendering priority:**
-1. `window.marked` (if `marked.min.js` was loaded) — full GFM rendering
-2. `builtinMd()` — handles code blocks, inline code, headers, bold/italic, lists, links, blockquotes, HR
+Completed `write_file` and `edit_file` tool blocks display a **⊕ Diff** button that posts `showDiff` to the extension host, which opens VS Code's native `git.openChange` diff view.
 
 **@ autocomplete flow:**
 1. On `input` event: scan back from cursor to find `@` with no intervening spaces
@@ -294,32 +337,24 @@ Storage: `context.globalStorageUri` for the vectors JSON (persists across sessio
 Challenge: keeping embeddings fresh when files change — use `vscode.workspace.onDidSaveTextDocument`.
 
 ### Syntax Highlighting in Code Blocks
-Drop `highlight.min.js` and a theme CSS file into `media/`. In `chat.js`, after rendering markdown, call `hljs.highlightAll()` on the new content. No other changes needed.
+Drop `highlight.min.js` and a theme CSS file into `media/`. In `chat.js`, after rendering markdown (or receiving `renderedMarkdown`), call `hljs.highlightAll()` on the new content. No other changes needed.
+
+### Virtual Diff Preview (Pre-apply Review)
+Register a `TextDocumentContentProvider` for a custom URI scheme (e.g. `agent-preview://`). Before applying a write/edit, store the proposed content in a memory cache keyed by path. Open a native VS Code diff with `vscode.commands.executeCommand('vscode.diff', originalUri, previewUri, 'Agent Proposed Changes')`. Add Accept/Reject buttons to the tool approval card.
+
+The current `⊕ Diff` button shows a post-apply `git diff` — the pre-apply virtual diff would allow rejecting changes before they hit disk.
 
 ### More Tools
-Ideas for additional tools:
-- `get_open_editors` — list currently open tabs
-- `get_symbols` — use `vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri)` to get outline
-- `go_to_definition` — resolve a symbol's definition location
-- `apply_edit` — use `vscode.workspace.applyEdit` for surgical edits (rather than full file overwrites)
-- `get_git_diff` — shell out to `git diff` via `child_process`
-- `create_file` — alias for `write_file` that errors if file already exists (safety)
 - `delete_file` — `vscode.workspace.fs.delete()`
-
-### Settings UI Polish
-- Endpoint add/edit/delete directly from the settings panel (currently requires editing settings.json)
-- Per-session system prompt override
-- Token usage display (if the API returns `usage` in the response)
-
-### Keyboard Shortcuts
-- Command palette already exposes `newChat`, `toggleVerbose`, `showLogs`, `clearHistory`
-- Could add keybindings in `package.json` under `contributes.keybindings`
+- `create_file` — alias for `write_file` that errors if file already exists
+- `get_open_editors` — list currently open editor tabs
+- `go_to_definition` — resolve a symbol's definition location via `vscode.executeDefinitionProvider`
 
 ---
 
 ## Key Constraints
 
-- **Zero external dependencies.** No npm, no CDN, no `require()` of packages not bundled with Node.js or VS Code itself. Built-in modules (fs, path, crypto) are fine. VS Code API is fine.
+- **Zero external dependencies.** No npm, no CDN, no `require()` of packages not bundled with Node.js or VS Code itself. Built-in modules (`path`, `crypto`, `child_process`) are fine. VS Code API is fine.
 - **No Chinese AI models.** Do not suggest or integrate Qwen or other models from Chinese vendors.
 - **Air-gapped deployment.** All files must be self-contained. No network calls except to the configured LLM API endpoint.
 - **VS Code 1.80+ / Node.js 18+.** `fetch` is used as a built-in. Do not introduce `node-fetch` or `axios`.
@@ -333,15 +368,29 @@ Ideas for additional tools:
 |-----|-------|
 | `vscode.window.registerWebviewViewProvider` | Registers the sidebar chat panel |
 | `vscode.window.createOutputChannel` | Logging output channel |
-| `vscode.window.showInformationMessage` | Tool permission modals |
+| `vscode.window.showInformationMessage` | Tool permission modals and approval toasts |
+| `vscode.window.withProgress` | Status bar progress indicator during agent runs |
+| `vscode.window.terminals`, `createTerminal` | `run_terminal` tool — shows terminal, executes command |
 | `vscode.workspace.getConfiguration` | Reading/writing settings |
-| `vscode.workspace.findFiles` | @ autocomplete and search_files tool |
+| `vscode.workspace.findFiles` | @ autocomplete and `search_files` tool |
+| `vscode.workspace.fs.readFile` | Reading files (remote-safe; replaces `fs.readFileSync`) |
+| `vscode.workspace.fs.writeFile` | Writing new/non-open files (remote-safe) |
+| `vscode.workspace.fs.readDirectory` | Listing directories (replaces `fs.readdirSync`) |
+| `vscode.workspace.fs.createDirectory` | Creating parent directories before writes |
+| `vscode.workspace.openTextDocument` | Opening document for WorkspaceEdit or buffer access |
+| `vscode.workspace.applyEdit` | Applying WorkspaceEdit (preserves undo history) |
+| `vscode.workspace.textDocuments` | Accessing open editor buffers (includes unsaved changes) |
+| `vscode.workspace.asRelativePath` | Making paths relative for display |
 | `vscode.workspace.onDidChangeConfiguration` | Config change listener |
-| `vscode.languages.getDiagnostics` | get_diagnostics tool |
-| `vscode.window.terminals`, `createTerminal` | run_terminal tool (display only) |
-| `child_process.exec` (Node.js built-in) | run_terminal output capture |
-| `ExtensionContext.globalState` | Session history persistence |
+| `vscode.languages.getDiagnostics` | `get_diagnostics` tool |
+| `vscode.WorkspaceEdit`, `vscode.Range` | Surgical file edits in `edit_file` and `write_file` |
+| `vscode.commands.executeCommand('markdown.api.render')` | Server-side markdown → HTML rendering |
+| `vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider')` | `get_symbols` tool |
+| `vscode.commands.executeCommand('git.openChange')` | Native git diff view for ⊕ Diff button |
+| `vscode.extensions.getExtension('vscode.git')` | Git extension API for `get_git_diff` |
+| `terminal.shellIntegration.executeCommand` | Single-execution terminal capture (VS Code 1.93+) |
+| `ExtensionContext.globalState` | Session history and model/usage cache persistence |
+| `ExtensionContext.secrets` | Secure API key storage (OS keychain) |
 | `ExtensionContext.extensionUri` | Resolving asset paths for webview |
 | `vscode.Uri.joinPath`, `webview.asWebviewUri` | Converting local file paths to webview-accessible URIs |
-| `vscode.commands.executeCommand` | Opening VS Code settings UI |
-| `vscode.workspace.asRelativePath` | Making paths relative for display |
+| `vscode.ProgressLocation.Window` | Bottom status bar progress with cancel support |
