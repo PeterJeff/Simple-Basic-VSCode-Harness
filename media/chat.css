@@ -154,6 +154,22 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .tool-name  { font-weight: 600; font-family: var(--vscode-editor-font-family, monospace); }
 .tool-state { font-size: 10px; opacity: 0.7; margin-left: auto; }
 
+.tool-diff-btn {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid var(--vscode-widget-border, #555);
+    border-radius: 3px;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    font-size: 10px;
+    margin-left: 4px;
+    padding: 1px 5px;
+}
+.tool-diff-btn:hover {
+    background: var(--vscode-toolbar-hoverBackground);
+    color: var(--vscode-foreground);
+}
+
 .tool-body {
     display: none;
     padding: 6px 8px;

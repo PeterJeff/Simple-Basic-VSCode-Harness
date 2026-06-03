@@ -1,6 +1,5 @@
 const vscode = require('vscode');
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 const api = require('./apiClient');
 const agentRunner = require('./agentRunner');
@@ -20,14 +19,17 @@ class ChatViewProvider {
         this._session = this._history.createSession();
         this._mode = 'chat';
         this._streamMsgId = '';
+        this._streamBuffers = new Map(); // msgId → accumulated token text for server-side markdown render
         this._sessionState = null;
         this._pendingApprovals = new Map(); // callId → { resolve }
         certLoader.configure({ enabled: api.getConfig().get('winCertStore', true) });
 
+        // Inject secrets store so adapters read keys from OS keychain, not plain-text settings
+        api.setSecrets(context.secrets);
+
         // Register in-chat approval callback with toolHandler
         toolHandler.setApprovalCallback(async (toolName, callId, args, msgId, rawCall) => {
             return new Promise((resolve) => {
-                // Wrap resolve so we can detect when the approval is handled
                 let handled = false;
                 const wrappedResolve = (decision) => {
                     handled = true;
@@ -44,8 +46,8 @@ class ChatViewProvider {
                     msgId
                 });
 
-                // If the user hasn't responded in 3 s, show a non-modal toast notification
-                // so they know the agent is waiting even if the chat panel isn't visible.
+                // If user hasn't responded in 3 s, show a toast so the agent stays visible
+                // even when the chat panel is collapsed.
                 setTimeout(() => {
                     if (!handled) {
                         vscode.window.showInformationMessage(
@@ -108,22 +110,25 @@ class ChatViewProvider {
         const cfg = api.getConfig();
         certLoader.configure({ enabled: cfg.get('winCertStore', true) });
         const supportsMonthlyUsage = this._supportsMonthlyUsage();
-        this.sendToWebview({
-            type: 'configUpdate',
-            servers: api.getServers(),
-            endpoints: api.getEndpoints(),
-            activeEndpoint: cfg.get('activeEndpoint', ''),
-            model: cfg.get('model', ''),
-            streaming: cfg.get('streaming', true),
-            enterToSend: cfg.get('enterToSend', true),
-            verboseLogging: cfg.get('verboseLogging', false),
-            maxIterations: cfg.get('maxIterations', 20),
-            toolPermissions: cfg.get('toolPermissions', {}),
-            askSageToolMode: cfg.get('askSageToolMode', 'api'),
-            supportsMonthlyUsage
+
+        this._getServersForWebview().then(servers => {
+            this.sendToWebview({
+                type: 'configUpdate',
+                servers,
+                endpoints: api.getEndpoints(),
+                activeEndpoint: cfg.get('activeEndpoint', ''),
+                model: cfg.get('model', ''),
+                streaming: cfg.get('streaming', true),
+                enterToSend: cfg.get('enterToSend', true),
+                verboseLogging: cfg.get('verboseLogging', false),
+                maxIterations: cfg.get('maxIterations', 20),
+                toolPermissions: cfg.get('toolPermissions', {}),
+                askSageToolMode: cfg.get('askSageToolMode', 'api'),
+                supportsMonthlyUsage
+            });
         });
+
         this._sessionState = null;
-        // Auto-fetch on endpoint change so the banner refreshes immediately
         if (supportsMonthlyUsage) {
             this._fetchMonthlyUsage().catch(() => {});
         }
@@ -237,6 +242,26 @@ class ChatViewProvider {
                 break;
             }
 
+            case 'showDiff': {
+                try {
+                    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+                    const filePath = path.isAbsolute(msg.path) ? msg.path : path.join(root, msg.path);
+                    const uri = vscode.Uri.file(filePath);
+                    // Opens native side-by-side diff against git HEAD
+                    await vscode.commands.executeCommand('git.openChange', uri);
+                } catch {
+                    // Fall back to just opening the file if git extension is unavailable
+                    try {
+                        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+                        const filePath = path.isAbsolute(msg.path) ? msg.path : path.join(root, msg.path);
+                        await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(filePath));
+                    } catch (e) {
+                        logger.error('showDiff', e);
+                    }
+                }
+                break;
+            }
+
             case 'openSettings':
                 vscode.commands.executeCommand(
                     'workbench.action.openSettings',
@@ -249,14 +274,19 @@ class ChatViewProvider {
     // ── Initialisation ─────────────────────────────────────────────────────────
 
     async _sendInitState() {
+        // One-time migration: move any plain-text apiKey values from settings to secrets
+        await this._migrateApiKeys();
+
         const cfg = api.getConfig();
         const supportsMonthlyUsage = this._supportsMonthlyUsage();
+        const servers = await this._getServersForWebview();
+
         this.sendToWebview({
             type: 'init',
             sessions: this._history.getSessions(),
             session: this._session,
             mode: this._mode,
-            servers: api.getServers(),
+            servers,
             endpoints: api.getEndpoints(),
             activeEndpoint: cfg.get('activeEndpoint', ''),
             model: cfg.get('model', ''),
@@ -272,7 +302,6 @@ class ChatViewProvider {
 
         this._fetchModels().catch(() => {});
 
-        // Auto-fetch monthly usage for endpoints that support it
         if (supportsMonthlyUsage) {
             this._fetchMonthlyUsage().catch(() => {});
         }
@@ -363,45 +392,69 @@ class ChatViewProvider {
     }
 
     async _runAgent() {
-        await agentRunner.run(this._mode, [...this._session.messages], this._sessionState, {
-            onMessageStart: (id) => {
-                this._streamMsgId = id;
-                this.sendToWebview({ type: 'assistantStart', id, ts: Date.now() });
-            },
-            onToken: (tok) => {
-                this.sendToWebview({ type: 'token', id: this._streamMsgId, text: tok });
-            },
-            onStreamEnd: () => {
-                this.sendToWebview({ type: 'streamEnd', id: this._streamMsgId });
-            },
-            onUsage: ({ usage, uuid, msgId }) => {
-                this.sendToWebview({ type: 'usage', msgId, usage, uuid });
-            },
-            onToolStart: (call) => {
-                this.sendToWebview({ type: 'toolStart', msgId: call.msgId, call });
-            },
-            onToolDenied: (call) => {
-                this.sendToWebview({ type: 'toolDenied', msgId: call.msgId, call });
-            },
-            onToolEnd: (call) => {
-                this.sendToWebview({ type: 'toolEnd', msgId: call.msgId, call });
-            },
-            onStatus: (text) => {
-                this.sendToWebview({ type: 'status', text });
-            },
-            onComplete: ({ messages: finalMessages, sessionState }) => {
-                this._session.messages = finalMessages;
-                this._sessionState = sessionState;
-                this._history.saveSession(this._session);
-                this.sendToWebview({ type: 'sessions', sessions: this._history.getSessions() });
-                this.sendToWebview({ type: 'done' });
-                // Auto-refresh monthly usage after each agent run
-                this._autoFetchMonthlyUsage();
-            },
-            onError: (errMsg) => {
-                this.sendToWebview({ type: 'error', text: errMsg });
-                this.sendToWebview({ type: 'done' });
-            }
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Window,
+            title: 'Standalone Agent',
+            cancellable: true
+        }, async (progress, token) => {
+            token.onCancellationRequested(() => {
+                agentRunner.stop();
+                this._clearPendingApprovals();
+            });
+
+            await agentRunner.run(this._mode, [...this._session.messages], this._sessionState, {
+                onMessageStart: (id) => {
+                    this._streamMsgId = id;
+                    this.sendToWebview({ type: 'assistantStart', id, ts: Date.now() });
+                },
+                onToken: (tok) => {
+                    this.sendToWebview({ type: 'token', id: this._streamMsgId, text: tok });
+                    const cur = this._streamBuffers.get(this._streamMsgId) || '';
+                    this._streamBuffers.set(this._streamMsgId, cur + tok);
+                },
+                onStreamEnd: async () => {
+                    this.sendToWebview({ type: 'streamEnd', id: this._streamMsgId });
+                    // Render markdown on the extension host using VS Code's built-in renderer
+                    // and push the safe HTML to replace client-side rendering in the webview.
+                    const msgId = this._streamMsgId;
+                    const text = this._streamBuffers.get(msgId);
+                    this._streamBuffers.delete(msgId);
+                    if (text) {
+                        try {
+                            const html = await vscode.commands.executeCommand('markdown.api.render', text);
+                            if (html) this.sendToWebview({ type: 'renderedMarkdown', id: msgId, html });
+                        } catch { /* markdown extension unavailable — webview falls back to built-in renderer */ }
+                    }
+                },
+                onUsage: ({ usage, uuid, msgId }) => {
+                    this.sendToWebview({ type: 'usage', msgId, usage, uuid });
+                },
+                onToolStart: (call) => {
+                    this.sendToWebview({ type: 'toolStart', msgId: call.msgId, call });
+                },
+                onToolDenied: (call) => {
+                    this.sendToWebview({ type: 'toolDenied', msgId: call.msgId, call });
+                },
+                onToolEnd: (call) => {
+                    this.sendToWebview({ type: 'toolEnd', msgId: call.msgId, call });
+                },
+                onStatus: (text) => {
+                    this.sendToWebview({ type: 'status', text });
+                    if (text) progress.report({ message: text });
+                },
+                onComplete: ({ messages: finalMessages, sessionState }) => {
+                    this._session.messages = finalMessages;
+                    this._sessionState = sessionState;
+                    this._history.saveSession(this._session);
+                    this.sendToWebview({ type: 'sessions', sessions: this._history.getSessions() });
+                    this.sendToWebview({ type: 'done' });
+                    this._autoFetchMonthlyUsage();
+                },
+                onError: (errMsg) => {
+                    this.sendToWebview({ type: 'error', text: errMsg });
+                    this.sendToWebview({ type: 'done' });
+                }
+            });
         });
     }
 
@@ -416,8 +469,19 @@ class ChatViewProvider {
             const refPath = m[1];
             try {
                 const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-                const abs = path.isAbsolute(refPath) ? refPath : path.join(root, refPath);
-                const content = fs.readFileSync(abs, 'utf8');
+                const absPath = path.isAbsolute(refPath) ? refPath : path.join(root, refPath);
+
+                // Prefer open document buffer so unsaved changes are included
+                const openDoc = vscode.workspace.textDocuments.find(doc =>
+                    doc.uri.fsPath === absPath ||
+                    vscode.workspace.asRelativePath(doc.uri) === refPath
+                );
+
+                const content = openDoc
+                    ? openDoc.getText()
+                    : new TextDecoder('utf-8').decode(
+                        await vscode.workspace.fs.readFile(vscode.Uri.file(absPath))
+                      );
                 contextBlocks.push({ path: refPath, content });
             } catch {
                 // File not found — leave the @ref in text as-is
@@ -491,7 +555,6 @@ class ChatViewProvider {
         }
     }
 
-    // Post-run auto-refresh always forces a live fetch so usage reflects the tokens just spent.
     _autoFetchMonthlyUsage() {
         if (this._supportsMonthlyUsage()) {
             this._fetchMonthlyUsage(true).catch(() => {});
@@ -544,7 +607,44 @@ class ChatViewProvider {
 
     async _updateSetting(key, value) {
         const cfg = vscode.workspace.getConfiguration('standaloneAgent');
+        if (key === 'servers') {
+            // Extract API keys → secrets; strip them (and the transient hasKey flag) from config
+            const sanitized = await Promise.all((value || []).map(async srv => {
+                const { apiKey, hasKey, ...rest } = srv;
+                if (apiKey) {
+                    await this._ctx.secrets.store(`secret_key_${srv.name}`, apiKey);
+                }
+                return rest;
+            }));
+            await cfg.update('servers', sanitized, vscode.ConfigurationTarget.Global);
+            return;
+        }
         await cfg.update(key, value, vscode.ConfigurationTarget.Global);
+    }
+
+    // ── Secure key storage helpers ─────────────────────────────────────────────
+
+    // One-time migration: moves any plain-text apiKey values from settings.json into secrets.
+    async _migrateApiKeys() {
+        const cfg = vscode.workspace.getConfiguration('standaloneAgent');
+        const servers = cfg.get('servers', []);
+        const toMigrate = servers.filter(s => s.apiKey);
+        if (toMigrate.length === 0) return;
+        for (const srv of toMigrate) {
+            await this._ctx.secrets.store(`secret_key_${srv.name}`, srv.apiKey);
+        }
+        const sanitized = servers.map(({ apiKey, ...rest }) => rest);
+        await cfg.update('servers', sanitized, vscode.ConfigurationTarget.Global);
+    }
+
+    // Returns servers without apiKey but with a hasKey boolean for the UI.
+    async _getServersForWebview() {
+        const servers = api.getServers();
+        return await Promise.all(servers.map(async srv => {
+            const { apiKey, ...rest } = srv;
+            const hasKey = !!(apiKey || await this._ctx.secrets.get(`secret_key_${srv.name}`));
+            return { ...rest, hasKey };
+        }));
     }
 
     // ── HTML generation ────────────────────────────────────────────────────────
@@ -557,13 +657,8 @@ class ChatViewProvider {
             return webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, file));
         }
 
-        const cssUri    = uri('chat.css');
-        const jsUri     = uri('chat.js');
-        const markedPath = path.join(this._ctx.extensionUri.fsPath, 'media', 'marked.min.js');
-        const hasMarked = fs.existsSync(markedPath);
-        const markedTag = hasMarked
-            ? `<script nonce="${nonce}" src="${uri('marked.min.js')}"></script>`
-            : '';
+        const cssUri = uri('chat.css');
+        const jsUri  = uri('chat.js');
 
         return `<!DOCTYPE html>
 <html lang="en">
@@ -580,7 +675,6 @@ class ChatViewProvider {
   <title>Standalone Agent</title>
 </head>
 <body>
-  ${markedTag}
   <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;

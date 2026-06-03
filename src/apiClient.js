@@ -2,6 +2,19 @@ const vscode = require('vscode');
 const logger = require('./logger');
 const { getAdapter } = require('./adapters/index');
 
+let _secrets = null;
+
+function setSecrets(secrets) {
+    _secrets = secrets;
+}
+
+async function _withKey(server) {
+    if (!_secrets) return server;
+    const stored = await _secrets.get(`secret_key_${server.name}`);
+    if (!stored) return server;
+    return { ...server, apiKey: stored };
+}
+
 function getConfig() {
     return vscode.workspace.getConfiguration('standaloneAgent');
 }
@@ -63,7 +76,8 @@ async function listModels() {
     try { resolved = resolveActive(); }
     catch (e) { logger.error('listModels', e); return []; }
 
-    const { server, endpoint, adapter } = resolved;
+    const { server: rawServer, endpoint, adapter } = resolved;
+    const server = await _withKey(rawServer);
     return await adapter.listModels(server, endpoint);
 }
 
@@ -80,7 +94,8 @@ async function listModels() {
  * @returns {Promise<{ message: object, sessionState: object }>}
  */
 async function chat({ messages, tools, onToken, signal, sessionState }) {
-    const { server, endpoint, adapter } = resolveActive();
+    const { server: rawServer, endpoint, adapter } = resolveActive();
+    const server = await _withKey(rawServer);
 
     const model = resolveModel(endpoint);
     if (!model) throw new Error('No model selected. Open the model dropdown in the sidebar.');
@@ -102,4 +117,4 @@ async function chat({ messages, tools, onToken, signal, sessionState }) {
     });
 }
 
-module.exports = { chat, listModels, getConfig, getEndpoints, getServers, getActiveEndpointName, resolveActive };
+module.exports = { chat, listModels, getConfig, getEndpoints, getServers, getActiveEndpointName, resolveActive, setSecrets };

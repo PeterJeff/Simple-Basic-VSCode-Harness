@@ -1,6 +1,5 @@
 const vscode = require('vscode');
 const path = require('path');
-const fs = require('fs');
 const logger = require('./logger');
 
 // ── Tool definitions (OpenAI function-calling format) ─────────────────────────
@@ -227,26 +226,48 @@ async function _run(toolName, args) {
     switch (toolName) {
 
         case 'read_file': {
-            const content = fs.readFileSync(abs(args.path), 'utf8');
+            const uri = vscode.Uri.file(abs(args.path));
+            // Prefer open document buffer (includes unsaved edits)
+            const openDoc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === uri.fsPath);
+            const content = openDoc
+                ? openDoc.getText()
+                : new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(uri));
             return { content, line_count: content.split('\n').length };
         }
 
         case 'write_file': {
             const target = abs(args.path);
-            fs.mkdirSync(path.dirname(target), { recursive: true });
-            fs.writeFileSync(target, args.content, 'utf8');
-            vscode.workspace.fs.stat(vscode.Uri.file(target)).then(() => {}, () => {});
+            const uri = vscode.Uri.file(target);
+
+            // If file is open in editor, use WorkspaceEdit to preserve undo history
+            const openDoc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === target);
+            if (openDoc) {
+                const edit = new vscode.WorkspaceEdit();
+                const fullRange = new vscode.Range(
+                    openDoc.positionAt(0),
+                    openDoc.positionAt(openDoc.getText().length)
+                );
+                edit.replace(uri, fullRange, args.content);
+                const success = await vscode.workspace.applyEdit(edit);
+                if (success) await openDoc.save();
+                return { success, path: args.path };
+            }
+
+            // New or non-open file: use workspace.fs (works across remote/WSL/containers)
+            const dirUri = vscode.Uri.file(path.dirname(target));
+            await vscode.workspace.fs.createDirectory(dirUri);
+            await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(args.content));
             return { success: true, path: args.path };
         }
 
         case 'list_directory': {
-            const dirPath = abs(args.path || '');
-            const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+            const dirUri = vscode.Uri.file(abs(args.path || ''));
+            const entries = await vscode.workspace.fs.readDirectory(dirUri);
             return {
                 path: args.path || '.',
-                entries: entries.map(e => ({
-                    name: e.name,
-                    type: e.isDirectory() ? 'directory' : 'file'
+                entries: entries.map(([name, type]) => ({
+                    name,
+                    type: type === vscode.FileType.Directory ? 'directory' : 'file'
                 }))
             };
         }
@@ -262,7 +283,12 @@ async function _run(toolName, args) {
 
             for (const fileUri of files) {
                 let content;
-                try { content = fs.readFileSync(fileUri.fsPath, 'utf8'); } catch { continue; }
+                try {
+                    const openDoc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === fileUri.fsPath);
+                    content = openDoc
+                        ? openDoc.getText()
+                        : new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(fileUri));
+                } catch { continue; }
                 const lines = content.split('\n');
                 const matches = [];
                 for (let i = 0; i < lines.length; i++) {
@@ -317,48 +343,94 @@ async function _run(toolName, args) {
                 ? Math.min(args.timeout_ms, 120000)
                 : 10000;
 
-            const cp = require('child_process');
-            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
 
+            let terminal = vscode.window.terminals.find(t => t.name === 'Standalone Agent');
+            if (!terminal || terminal.exitStatus !== undefined) {
+                terminal = vscode.window.createTerminal({ name: 'Standalone Agent', cwd });
+            }
+            terminal.show(true);
+
+            // Use Shell Integration API (VS Code 1.93+) for single-execution capture
+            if (terminal.shellIntegration) {
+                const execution = terminal.shellIntegration.executeCommand(args.command);
+                const output = await Promise.race([
+                    (async () => {
+                        const chunks = [];
+                        for await (const chunk of execution.read()) {
+                            chunks.push(chunk);
+                        }
+                        return chunks.join('').trim() || '(no output)';
+                    })(),
+                    new Promise(resolve => setTimeout(() => resolve('(timeout)'), timeoutMs))
+                ]);
+                return { output, timeout_ms: timeoutMs };
+            }
+
+            // Fallback: cp.exec captures output without running the command a second time
+            const cp = require('child_process');
             const output = await new Promise((resolve) => {
-                cp.exec(args.command, { cwd: root, timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 }, (err, stdout, stderr) => {
+                cp.exec(args.command, { cwd, timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 }, (err, stdout, stderr) => {
                     const combined = [stdout, stderr].filter(Boolean).join('\n').trim();
                     resolve(combined || (err ? `exit ${err.code}` : '(no output)'));
                 });
             });
-
-            // Also show the command in the integrated terminal so the user can see it ran
-            let terminal = vscode.window.terminals.find(t => t.name === 'Standalone Agent');
-            if (!terminal || terminal.exitStatus !== undefined) {
-                terminal = vscode.window.createTerminal('Standalone Agent');
-            }
-            terminal.show(true);
-            terminal.sendText(args.command);
-
             return { output, timeout_ms: timeoutMs };
         }
 
         case 'edit_file': {
-            const target = abs(args.path);
-            const content = fs.readFileSync(target, 'utf8');
+            const uri = vscode.Uri.file(abs(args.path));
+            // openTextDocument returns in-memory content (includes unsaved edits)
+            const document = await vscode.workspace.openTextDocument(uri);
+            const content = document.getText();
             const { old_string, new_string, replace_all = false } = args;
             const count = content.split(old_string).length - 1;
             if (count === 0) return { error: `old_string not found in ${args.path}` };
             if (!replace_all && count > 1) return { error: `old_string found ${count} times in ${args.path} — add more surrounding context to make it unique, or set replace_all: true` };
-            const updated = replace_all ? content.split(old_string).join(new_string) : content.replace(old_string, new_string);
-            fs.writeFileSync(target, updated, 'utf8');
-            vscode.workspace.fs.stat(vscode.Uri.file(target)).then(() => {}, () => {});
-            return { success: true, path: args.path, replacements: replace_all ? count : 1 };
+
+            const edit = new vscode.WorkspaceEdit();
+            const target = replace_all ? count : 1;
+            let searchFrom = 0;
+            let replacements = 0;
+            while (replacements < target) {
+                const index = content.indexOf(old_string, searchFrom);
+                if (index === -1) break;
+                const startPos = document.positionAt(index);
+                const endPos = document.positionAt(index + old_string.length);
+                edit.replace(uri, new vscode.Range(startPos, endPos), new_string);
+                searchFrom = index + 1;
+                replacements++;
+            }
+
+            const success = await vscode.workspace.applyEdit(edit);
+            if (success) await document.save();
+            return { success, path: args.path, replacements };
         }
 
         case 'get_git_diff': {
+            // Try VS Code's built-in git extension (cleaner, no shell spawning for full-workspace diff)
+            if (!args.path) {
+                const gitExt = vscode.extensions.getExtension('vscode.git')?.exports;
+                if (gitExt) {
+                    try {
+                        const gitApi = gitExt.getAPI(1);
+                        const repo = gitApi.repositories[0];
+                        if (repo) {
+                            const diff = await repo.diff(args.staged || false);
+                            return { diff: diff.trim(), has_changes: diff.trim().length > 0 };
+                        }
+                    } catch { /* fall through to child_process */ }
+                }
+            }
+
+            // Fallback (also handles path-scoped diffs where git API has no direct equivalent)
             const cp = require('child_process');
-            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+            const gitRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
             const gitArgs = ['diff'];
             if (args.staged) gitArgs.push('--staged');
             if (args.path)   { gitArgs.push('--'); gitArgs.push(abs(args.path)); }
             const diff = await new Promise((resolve) => {
-                cp.execFile('git', gitArgs, { cwd: root, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+                cp.execFile('git', gitArgs, { cwd: gitRoot, maxBuffer: 1024 * 1024 }, (err, stdout) => {
                     resolve(stdout || '');
                 });
             });

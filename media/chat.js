@@ -373,9 +373,15 @@
 
         const contentDiv = document.createElement('div');
         contentDiv.className = 'md-content';
-        contentDiv.innerHTML = msg.raw
-            ? (state.markdownEnabled ? renderMarkdown(msg.raw) : `<pre>${esc(msg.raw)}</pre>`)
-            : '';
+        if (msg.raw) {
+            if (!state.markdownEnabled) {
+                contentDiv.innerHTML = `<pre>${esc(msg.raw)}</pre>`;
+            } else if (msg.renderedHtml) {
+                contentDiv.innerHTML = msg.renderedHtml;
+            } else {
+                contentDiv.innerHTML = renderMarkdown(msg.raw);
+            }
+        }
         div.appendChild(contentDiv);
 
         if (msg.toolCalls && msg.toolCalls.length > 0) {
@@ -433,17 +439,28 @@
 
         const args = tc.args ? JSON.stringify(tc.args, null, 2) : '';
         const resultText = tc.result ? JSON.stringify(tc.result, null, 2) : '';
+        const isDiffable = tc.done && !tc.result?.error &&
+            (tc.name === 'write_file' || tc.name === 'edit_file') && tc.args?.path;
 
         block.innerHTML = `
 <div class="tool-header" onclick="this.parentElement.classList.toggle('open')">
   <span>${stateIcon}</span>
   <span class="tool-name">${esc(tc.name)}</span>
   <span class="tool-state">${stateText}</span>
+  ${isDiffable ? `<button class="tool-diff-btn" title="View git diff">⊕ Diff</button>` : ''}
 </div>
 <div class="tool-body">${tc.done
     ? `<b>args:</b>\n${esc(args)}\n\n<b>result:</b>\n${esc(resultText)}`
     : `<b>args:</b>\n${esc(args)}`
 }</div>`;
+
+        if (isDiffable) {
+            block.querySelector('.tool-diff-btn')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                vscode.postMessage({ type: 'showDiff', path: tc.args.path });
+            });
+        }
+
         return block;
     }
 
@@ -872,12 +889,19 @@
     }
 
     function makeServerForm(server, onSave, onCancel) {
+        const keyPlaceholder = server.hasKey
+            ? 'Leave blank to keep existing key'
+            : 'API Key (optional)';
+        const keyHint = server.hasKey
+            ? '<span style="font-size:10px;opacity:0.6;">🔐 Key stored securely</span>'
+            : '';
         const form = document.createElement('div');
         form.className = 'config-edit-form';
         form.innerHTML = `
 <input type="text" class="ef-name" placeholder="Name (e.g. Local)" value="${esc(server.name || '')}">
 <input type="text" class="ef-url" placeholder="URL (e.g. http://localhost:11434/v1)" value="${esc(server.url || '')}">
-<input type="password" class="ef-key" placeholder="API Key (optional)" value="${esc(server.apiKey || '')}">
+<input type="password" class="ef-key" placeholder="${esc(keyPlaceholder)}">
+${keyHint}
 <div class="config-form-actions">
   <button class="config-save-btn">Save</button>
   <button class="config-cancel-btn">Cancel</button>
@@ -886,7 +910,12 @@
             const name = form.querySelector('.ef-name').value.trim();
             const url  = form.querySelector('.ef-url').value.trim();
             if (!name || !url) return;
-            onSave({ name, url, apiKey: form.querySelector('.ef-key').value });
+            const keyValue = form.querySelector('.ef-key').value;
+            // Only include apiKey when the user explicitly typed a value;
+            // empty = keep whatever is already stored in secrets.
+            const serverData = { name, url };
+            if (keyValue) serverData.apiKey = keyValue;
+            onSave(serverData);
         });
         form.querySelector('.config-cancel-btn').addEventListener('click', onCancel);
         return form;
@@ -1244,6 +1273,18 @@
                 break;
             }
 
+            case 'renderedMarkdown': {
+                // Replace client-rendered markdown with VS Code's built-in server-rendered HTML
+                const aMsg = state.messages.find(m => m.id === msg.id);
+                if (aMsg) aMsg.renderedHtml = msg.html;
+                const domEl = el.messages.querySelector(`[data-id="${CSS.escape(msg.id)}"]`);
+                if (domEl && state.markdownEnabled) {
+                    const contentDiv = domEl.querySelector('.md-content');
+                    if (contentDiv) contentDiv.innerHTML = msg.html;
+                }
+                break;
+            }
+
             case 'usage': {
                 state.usageByMsgId[msg.msgId] = { usage: msg.usage, uuid: msg.uuid };
                 const domEl = el.messages.querySelector(`[data-id="${CSS.escape(msg.msgId)}"]`);
@@ -1348,6 +1389,23 @@
                         header.querySelector('.tool-spinner')?.replaceWith(document.createTextNode(stateIcon));
                         const st = header.querySelector('.tool-state');
                         if (st) st.textContent = stateText;
+
+                        // Add diff button for successful write/edit operations
+                        const name = msg.call.name;
+                        const argPath = msg.call.args?.path;
+                        if (!msg.call.result?.error &&
+                            (name === 'write_file' || name === 'edit_file') &&
+                            argPath && !header.querySelector('.tool-diff-btn')) {
+                            const diffBtn = document.createElement('button');
+                            diffBtn.className = 'tool-diff-btn';
+                            diffBtn.title = 'View git diff';
+                            diffBtn.textContent = '⊕ Diff';
+                            diffBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                vscode.postMessage({ type: 'showDiff', path: argPath });
+                            });
+                            header.appendChild(diffBtn);
+                        }
                     }
                     const body = block.querySelector('.tool-body');
                     if (body) {
