@@ -133,4 +133,4 @@ async function chat({ messages, tools, onToken, signal, sessionState }) {
     });
 }
 
-module.exports = { chat, listModels, getConfig, getEndpoints, getServers, getActiveEndpointName, resolveActive, setSecrets };
+module.exports = { chat, listModels, getConfig, getEndpoints, getServers, getActiveEndpointName, resolveActive, setSecrets, _withKey };

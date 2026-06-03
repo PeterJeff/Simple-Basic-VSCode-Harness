@@ -544,12 +544,13 @@ class ChatViewProvider {
             this.sendToWebview({ type: 'monthlyUsage', error: e.message });
             return;
         }
-        const { server, endpoint, adapter } = resolved;
+        const { server: rawServer, endpoint, adapter } = resolved;
         if (typeof adapter.getMonthlyUsage !== 'function') {
             this.sendToWebview({ type: 'monthlyUsage', error: 'Not supported by this adapter' });
             return;
         }
         try {
+            const server = await api._withKey(rawServer);
             const data = await adapter.getMonthlyUsage(server, endpoint);
             this._writeCache('sa_monthly_cache', { data });
             this.sendToWebview({ type: 'monthlyUsage', data });
