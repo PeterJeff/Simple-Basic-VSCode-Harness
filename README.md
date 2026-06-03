@@ -113,9 +113,15 @@ Full autonomous loop. The agent can call all tools and will keep iterating (up t
 | `search_files` | Regex search across workspace files | allow |
 | `get_diagnostics` | Get VS Code errors/warnings | allow |
 | `write_file` | Write or overwrite a file | ask |
-| `run_terminal` | Send a command to the integrated terminal | ask |
+| `run_terminal` | Run a command and capture its output | ask |
 
-Tool output is not currently captured from the terminal — it only sends the command.
+**`run_terminal` output capture:** The tool captures everything written to the terminal for `timeout_ms` milliseconds (default 10 seconds) using VSCode's `onDidWriteTerminalData` API, then returns the stripped output to the model. Increase `timeout_ms` for slow commands:
+
+```
+run_terminal({ command: "npm install", timeout_ms: 30000 })
+```
+
+Output includes the shell prompt and echoed command — the model ignores those and reads the actual result. ANSI escape sequences (colors, cursor codes) are stripped automatically.
 
 **Permission levels:**
 - `allow` — runs silently with no prompt
@@ -136,6 +142,8 @@ When a tool has `ask` permission, an approval card is rendered inline in the cha
 - **Deny** — reject the call; the model receives an error result and may try another approach
 
 If the agent issues multiple tool calls in a single response (e.g. reading several files at once), each call gets its own approval card simultaneously. All cards can be acted on independently — approved calls execute in parallel as soon as their card is resolved.
+
+**Background notification:** If the chat panel is not visible and an approval card is waiting, a non-modal toast notification appears after 3 seconds reading *"Standalone Agent: approve 'toolName' in chat"* with a **Focus Chat** button that brings the panel into view. The notification only appears if you haven't already responded via the card.
 
 ---
 
@@ -320,7 +328,7 @@ Verbose logging (toggle via command palette: "Standalone Agent: Toggle Verbose L
 
 ## Limitations / Known Issues
 
-- **Terminal output is not captured.** `run_terminal` sends a command to the VS Code integrated terminal but cannot read stdout/stderr. The agent is informed of this. Use `read_file` on any output files instead.
+- **Terminal output capture is time-boxed.** `run_terminal` waits `timeout_ms` ms (default 10 s) for output. Commands that produce output after the window closes will be missed. The output includes the echoed command and shell prompt, which the model is instructed to ignore.
 - **No bundled syntax highlighting.** Code blocks in markdown responses are displayed without language-specific syntax colors unless you add a highlighting library to `media/`.
 - **Tool call format requires function calling support.** The model must support OpenAI-compatible `tools` / `tool_calls`. Use **TC:TXT** mode (prompt injection) as a fallback for models that only output plain text.
 - **Streaming partial JSON.** Some APIs send tool call arguments split across multiple stream chunks. The client reassembles these, but an unusual chunk boundary could cause a parse failure. Disable streaming as a workaround.

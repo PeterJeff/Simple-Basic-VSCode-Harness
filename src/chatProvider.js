@@ -24,7 +24,14 @@ class ChatViewProvider {
         // Register in-chat approval callback with toolHandler
         toolHandler.setApprovalCallback(async (toolName, callId, args, msgId, rawCall) => {
             return new Promise((resolve) => {
-                this._pendingApprovals.set(callId, { resolve });
+                // Wrap resolve so we can detect when the approval is handled
+                let handled = false;
+                const wrappedResolve = (decision) => {
+                    handled = true;
+                    resolve(decision);
+                };
+
+                this._pendingApprovals.set(callId, { resolve: wrappedResolve });
                 this.sendToWebview({
                     type: 'toolApprovalRequest',
                     callId,
@@ -33,6 +40,21 @@ class ChatViewProvider {
                     rawCall,
                     msgId
                 });
+
+                // If the user hasn't responded in 3 s, show a non-modal toast notification
+                // so they know the agent is waiting even if the chat panel isn't visible.
+                setTimeout(() => {
+                    if (!handled) {
+                        vscode.window.showInformationMessage(
+                            `Standalone Agent: approve "${toolName}" in chat`,
+                            'Focus Chat'
+                        ).then(choice => {
+                            if (choice === 'Focus Chat') {
+                                vscode.commands.executeCommand('standalone-agent.chatView.focus');
+                            }
+                        });
+                    }
+                }, 3000);
             });
         });
     }

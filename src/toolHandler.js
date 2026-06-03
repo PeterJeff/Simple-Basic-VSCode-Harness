@@ -82,11 +82,12 @@ const ALL_TOOLS = [
         type: 'function',
         function: {
             name: 'run_terminal',
-            description: 'Send a command to the integrated terminal. Note: output is not captured; use read_file to verify results written to disk.',
+            description: 'Run a command in the integrated terminal and capture its output. Output is captured for timeout_ms milliseconds (default 10000). Increase timeout_ms for slow commands (builds, installs, tests). The output includes the shell prompt and command echo — ignore those and read the actual result.',
             parameters: {
                 type: 'object',
                 properties: {
-                    command: { type: 'string', description: 'Shell command to execute' }
+                    command:    { type: 'string', description: 'Shell command to execute' },
+                    timeout_ms: { type: 'number', description: 'Milliseconds to wait for output (default 10000, max 120000). Increase for long-running commands.' }
                 },
                 required: ['command']
             }
@@ -267,12 +268,40 @@ async function _run(toolName, args) {
 
         case 'run_terminal': {
             let terminal = vscode.window.terminals.find(t => t.name === 'Standalone Agent');
-            if (!terminal || terminal.exitStatus !== undefined) {
+            const isNew = !terminal || terminal.exitStatus !== undefined;
+            if (isNew) {
                 terminal = vscode.window.createTerminal('Standalone Agent');
+                // Brief pause for the new terminal's shell to initialize before we start listening
+                await new Promise(r => setTimeout(r, 400));
             }
             terminal.show(true);
+
+            const timeoutMs = typeof args.timeout_ms === 'number' && args.timeout_ms > 0
+                ? Math.min(args.timeout_ms, 120000)
+                : 10000;
+
+            const chunks = [];
+            const listener = vscode.window.onDidWriteTerminalData(e => {
+                if (e.terminal === terminal) chunks.push(e.data);
+            });
+
             terminal.sendText(args.command);
-            return { sent: true, note: 'Command sent to terminal. Terminal output is not captured.' };
+            await new Promise(r => setTimeout(r, timeoutMs));
+            listener.dispose();
+
+            // Strip ANSI escape sequences (colors, cursor movement, OSC sequences) and normalize line endings
+            const rawOutput = chunks.join('');
+            const output = rawOutput
+                .replace(/\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07|[()][AB012]|[=>78MH])/g, '')
+                .replace(/\r\n/g, '\n')
+                .replace(/\r/g, '\n')
+                .trim();
+
+            return {
+                sent: true,
+                output: output || '(no output captured)',
+                timeout_ms: timeoutMs
+            };
         }
 
         default:
