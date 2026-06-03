@@ -1081,7 +1081,7 @@
                     el.monthlyUsageDisplay.textContent = 'Error: ' + msg.error;
                 } else {
                     const d = msg.data || {};
-                    const used  = d.tokens_used  || d.tokensUsed  || d.used  || d.count  || '?';
+                    const used  = d.response     || d.tokens_used || d.tokensUsed || d.used || d.count || '?';
                     const limit = d.token_limit   || d.tokenLimit  || d.limit || null;
                     el.monthlyUsageDisplay.textContent = limit
                         ? `${Number(used).toLocaleString()} / ${Number(limit).toLocaleString()} tokens this month`
