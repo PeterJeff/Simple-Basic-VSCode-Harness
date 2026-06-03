@@ -140,7 +140,7 @@ module.exports = {
         }
     },
 
-    async chat(server, endpoint, { messages, tools, onToken, signal, model, toolCallMode }) {
+    async chat(server, endpoint, { messages, tools, onToken, signal, model, streaming, toolCallMode }) {
         const url  = buildUrl(server, endpoint, 'query', '/server/query');
         const opts = endpoint.adapterOptions || {};
         const mode = toolCallMode || 'api';
@@ -153,7 +153,7 @@ module.exports = {
             finalSystemPrompt = ((finalSystemPrompt || '') + '\n\n' + buildToolsPrompt(tools)).trim();
         }
 
-        const body = { message: messagePayload, model, temperature: 0.1 };
+        const body = { message: messagePayload, model, temperature: 0.1, usage: true, streaming: !!streaming };
 
         if (finalSystemPrompt)            body.system_prompt    = finalSystemPrompt;
         // In api mode, send tool definitions natively
