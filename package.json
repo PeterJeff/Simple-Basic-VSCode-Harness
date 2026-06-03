@@ -185,6 +185,9 @@
             "list_directory":  "allow",
             "search_files":    "allow",
             "get_diagnostics": "allow",
+            "get_git_diff":    "allow",
+            "get_symbols":     "allow",
+            "edit_file":       "ask",
             "write_file":      "ask",
             "run_terminal":    "ask"
           },

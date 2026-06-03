@@ -92,10 +92,56 @@ const ALL_TOOLS = [
                 required: ['command']
             }
         }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'edit_file',
+            description: 'Edit a file by replacing an exact string with new content. old_string must match exactly (including whitespace and indentation). Errors if the string is not found or appears more than once — add surrounding context lines to make it unique. Use replace_all: true only for intentional bulk replacements (e.g. renaming a symbol). Prefer this over write_file for changes to existing files.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path:        { type: 'string',  description: 'File path relative to workspace root' },
+                    old_string:  { type: 'string',  description: 'Exact string to find and replace, including surrounding context if needed for uniqueness' },
+                    new_string:  { type: 'string',  description: 'Replacement string' },
+                    replace_all: { type: 'boolean', description: 'Replace every occurrence instead of requiring exactly one match. Default: false.' }
+                },
+                required: ['path', 'old_string', 'new_string']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_git_diff',
+            description: 'Get the git diff for the workspace or a specific file. Shows uncommitted changes. Use staged: true to see changes already staged for commit.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path:   { type: 'string',  description: 'File path to scope the diff (optional — omit for full workspace diff)' },
+                    staged: { type: 'boolean', description: 'Show staged (index) diff instead of unstaged working-tree diff. Default: false.' }
+                },
+                required: []
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_symbols',
+            description: 'Get the symbol outline (classes, functions, variables, etc.) for a file using the VS Code language server. Useful for understanding a file\'s structure before editing it.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    path: { type: 'string', description: 'File path relative to workspace root' }
+                },
+                required: ['path']
+            }
+        }
     }
 ];
 
-const READ_ONLY_TOOLS = ['read_file', 'list_directory', 'search_files', 'get_diagnostics'];
+const READ_ONLY_TOOLS = ['read_file', 'list_directory', 'search_files', 'get_diagnostics', 'get_git_diff', 'get_symbols'];
 
 // ── Approval callback (registered by chatProvider for in-chat approval UI) ────
 // Signature: (toolName, callId, args, msgId, rawCall) → Promise<'allow-once'|'allow-always'|'deny'>
@@ -290,6 +336,54 @@ async function _run(toolName, args) {
             terminal.sendText(args.command);
 
             return { output, timeout_ms: timeoutMs };
+        }
+
+        case 'edit_file': {
+            const target = abs(args.path);
+            const content = fs.readFileSync(target, 'utf8');
+            const { old_string, new_string, replace_all = false } = args;
+            const count = content.split(old_string).length - 1;
+            if (count === 0) return { error: `old_string not found in ${args.path}` };
+            if (!replace_all && count > 1) return { error: `old_string found ${count} times in ${args.path} — add more surrounding context to make it unique, or set replace_all: true` };
+            const updated = replace_all ? content.split(old_string).join(new_string) : content.replace(old_string, new_string);
+            fs.writeFileSync(target, updated, 'utf8');
+            vscode.workspace.fs.stat(vscode.Uri.file(target)).then(() => {}, () => {});
+            return { success: true, path: args.path, replacements: replace_all ? count : 1 };
+        }
+
+        case 'get_git_diff': {
+            const cp = require('child_process');
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+            const gitArgs = ['diff'];
+            if (args.staged) gitArgs.push('--staged');
+            if (args.path)   { gitArgs.push('--'); gitArgs.push(abs(args.path)); }
+            const diff = await new Promise((resolve) => {
+                cp.execFile('git', gitArgs, { cwd: root, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+                    resolve(stdout || '');
+                });
+            });
+            return { diff: diff.trim(), has_changes: diff.trim().length > 0 };
+        }
+
+        case 'get_symbols': {
+            const uri = vscode.Uri.file(abs(args.path));
+            const raw = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri);
+            if (!raw || raw.length === 0) return { symbols: [] };
+            const KINDS = ['File','Module','Namespace','Package','Class','Method','Property','Field','Constructor','Enum','Interface','Function','Variable','Constant','String','Number','Boolean','Array','Object','Key','Null','EnumMember','Struct','Event','Operator','TypeParameter'];
+            function flatten(syms, depth) {
+                const out = [];
+                for (const s of syms || []) {
+                    out.push({
+                        name:  s.name,
+                        kind:  KINDS[s.kind] || String(s.kind),
+                        range: { start_line: s.range.start.line + 1, end_line: s.range.end.line + 1 },
+                        depth
+                    });
+                    if (s.children?.length) out.push(...flatten(s.children, depth + 1));
+                }
+                return out;
+            }
+            return { symbols: flatten(raw, 0) };
         }
 
         default:

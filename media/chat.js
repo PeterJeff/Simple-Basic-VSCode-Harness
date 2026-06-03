@@ -266,10 +266,13 @@
         switch (name) {
             case 'read_file':       return args.path || '';
             case 'write_file':      return `${args.path || ''} (${String(args.content || '').length} chars)`;
+            case 'edit_file':       return `${args.path || ''} — "${String(args.old_string || '').split('\n')[0].slice(0, 40)}"`;
             case 'list_directory':  return args.path || '.';
             case 'search_files':    return `"${args.pattern || ''}"${args.glob ? ` in ${args.glob}` : ''}`;
             case 'get_diagnostics': return args.path || 'workspace';
             case 'run_terminal':    return String(args.command || '').slice(0, 80);
+            case 'get_git_diff':    return args.path ? `${args.path}${args.staged ? ' (staged)' : ''}` : (args.staged ? 'staged' : 'workspace');
+            case 'get_symbols':     return args.path || '';
             default: {
                 const j = JSON.stringify(args);
                 return (j && j !== '{}') ? j.slice(0, 60) : '';
