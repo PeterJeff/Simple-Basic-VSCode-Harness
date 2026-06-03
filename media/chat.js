@@ -29,6 +29,7 @@
         atDropdownItems:  [],
         atSelectedIdx:    -1,
         usageByMsgId:     {},
+        toolCallMode:     'api',
     };
 
     // ── Build DOM ────────────────────────────────────────────────────────────
@@ -69,6 +70,7 @@
       <div id="input-toggles">
         <button class="toggle-btn active" id="md-toggle" title="Toggle markdown rendering">MD</button>
         <button class="toggle-btn active" id="stream-toggle" title="Toggle streaming">Stream</button>
+        <button class="toggle-btn active" id="tc-mode-btn" title="Tool call mode: API-native (click to switch to text-injection)">TC:API</button>
         <span style="flex:1"></span>
         <span id="iter-badge" style="font-size:10px; color:var(--vscode-descriptionForeground);"></span>
       </div>
@@ -160,6 +162,7 @@
         sendBtn:          q('#send-btn'),
         mdToggle:         q('#md-toggle'),
         streamToggle:     q('#stream-toggle'),
+        tcModeBtn:        q('#tc-mode-btn'),
         iterBadge:        q('#iter-badge'),
         atDropdown:       q('#at-dropdown'),
         historyPanel:     q('#history-panel'),
@@ -522,6 +525,17 @@
         state.streamingEnabled = !state.streamingEnabled;
         el.streamToggle.classList.toggle('active', state.streamingEnabled);
         vscode.postMessage({ type: 'updateSetting', key: 'streaming', value: state.streamingEnabled });
+    });
+
+    el.tcModeBtn.addEventListener('click', () => {
+        state.toolCallMode = state.toolCallMode === 'api' ? 'prompt' : 'api';
+        const isApi = state.toolCallMode === 'api';
+        el.tcModeBtn.textContent = isApi ? 'TC:API' : 'TC:TXT';
+        el.tcModeBtn.title = isApi
+            ? 'Tool call mode: API-native (click to switch to text-injection)'
+            : 'Tool call mode: Text-injection (click to switch to API-native)';
+        el.tcModeBtn.classList.toggle('active', isApi);
+        vscode.postMessage({ type: 'updateSetting', key: 'askSageToolMode', value: state.toolCallMode });
     });
 
     // ── Send message ─────────────────────────────────────────────────────────
@@ -935,6 +949,7 @@
                 state.verbose        = msg.verboseLogging || false;
                 state.toolPermissions= msg.toolPermissions|| {};
                 state.toolDefs       = msg.toolDefs       || [];
+                state.toolCallMode   = msg.askSageToolMode || 'api';
 
                 el.modeSelect.value  = state.mode;
                 el.setVerbose.checked = state.verbose;
@@ -943,6 +958,8 @@
                     ? 'ON: Enter = send, Shift+Enter = newline'
                     : 'OFF: Shift+Enter = send, Enter = newline';
                 el.streamToggle.classList.toggle('active', state.streamingEnabled);
+                el.tcModeBtn.textContent = state.toolCallMode === 'api' ? 'TC:API' : 'TC:TXT';
+                el.tcModeBtn.classList.toggle('active', state.toolCallMode === 'api');
 
                 // Load existing session messages if any
                 if (msg.session && msg.session.messages.length > 0) {
@@ -973,6 +990,11 @@
                 state.enterToSend     = msg.enterToSend !== undefined ? msg.enterToSend : state.enterToSend;
                 state.verbose         = msg.verboseLogging !== undefined ? msg.verboseLogging : state.verbose;
                 state.toolPermissions = msg.toolPermissions || state.toolPermissions;
+                if (msg.askSageToolMode !== undefined) {
+                    state.toolCallMode = msg.askSageToolMode;
+                    el.tcModeBtn.textContent = state.toolCallMode === 'api' ? 'TC:API' : 'TC:TXT';
+                    el.tcModeBtn.classList.toggle('active', state.toolCallMode === 'api');
+                }
                 if (el.setEnterToSend) {
                     el.setEnterToSend.checked = state.enterToSend;
                     el.enterHint.textContent = state.enterToSend

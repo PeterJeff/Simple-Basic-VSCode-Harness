@@ -168,6 +168,13 @@
           "description": "Stream tokens as they arrive via SSE. Disable for APIs that don't support streaming.",
           "default": true
         },
+        "standaloneAgent.askSageToolMode": {
+          "type": "string",
+          "order": 6,
+          "enum": ["api", "prompt"],
+          "markdownDescription": "How to deliver tool definitions to the Ask Sage adapter.\n\n`api` — Send tools in the request body (native function calling; model/server must support it).\n\n`prompt` — Inject tool schemas as a JSON block into the system prompt and parse tool calls from the text response (works with any model).",
+          "default": "api"
+        },
         "standaloneAgent.toolPermissions": {
           "type": "object",
           "order": 6,

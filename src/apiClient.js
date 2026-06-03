@@ -41,6 +41,10 @@ function resolveStreaming(endpoint) {
     return cfg.get('streaming', true);
 }
 
+function resolveToolCallMode() {
+    return getConfig().get('askSageToolMode', 'api');
+}
+
 // Public accessors used by chatProvider / UI
 function getEndpoints() {
     return getConfig().get('endpoints', []);
@@ -81,9 +85,10 @@ async function chat({ messages, tools, onToken, signal, sessionState }) {
     const model = resolveModel(endpoint);
     if (!model) throw new Error('No model selected. Open the model dropdown in the sidebar.');
 
-    const streaming = resolveStreaming(endpoint);
+    const streaming    = resolveStreaming(endpoint);
+    const toolCallMode = resolveToolCallMode();
 
-    logger.log(`[apiClient] chat via adapter=${endpoint.adapter} endpoint="${endpoint.name}" model=${model} streaming=${streaming}`);
+    logger.log(`[apiClient] chat via adapter=${endpoint.adapter} endpoint="${endpoint.name}" model=${model} streaming=${streaming} toolCallMode=${toolCallMode}`);
 
     return await adapter.chat(server, endpoint, {
         messages,
@@ -92,7 +97,8 @@ async function chat({ messages, tools, onToken, signal, sessionState }) {
         signal,
         sessionState,
         model,
-        streaming
+        streaming,
+        toolCallMode
     });
 }
 

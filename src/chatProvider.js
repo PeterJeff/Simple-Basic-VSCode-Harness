@@ -75,7 +75,8 @@ class ChatViewProvider {
             enterToSend: cfg.get('enterToSend', true),
             verboseLogging: cfg.get('verboseLogging', false),
             maxIterations: cfg.get('maxIterations', 20),
-            toolPermissions: cfg.get('toolPermissions', {})
+            toolPermissions: cfg.get('toolPermissions', {}),
+            askSageToolMode: cfg.get('askSageToolMode', 'api')
         });
         // Switching endpoints resets adapter session state
         this._sessionState = null;
@@ -193,7 +194,8 @@ class ChatViewProvider {
             verboseLogging: logger.isVerbose(),
             maxIterations: cfg.get('maxIterations', 20),
             toolPermissions: cfg.get('toolPermissions', {}),
-            toolDefs: toolHandler.ALL_TOOLS.map(t => t.function.name)
+            toolDefs: toolHandler.ALL_TOOLS.map(t => t.function.name),
+            askSageToolMode: cfg.get('askSageToolMode', 'api')
         });
 
         // Auto-fetch models in background

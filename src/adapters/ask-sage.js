@@ -41,11 +41,14 @@ function buildUrl(server, endpoint, key, defaultPath) {
 // Convert OpenAI-format messages to Ask Sage's native format.
 // Single user turn → plain string. Multi-turn → [{user,message}] array.
 // System message is extracted separately for the top-level system_prompt field.
+// tool-role messages are converted to user messages so the LLM retains tool result context.
 function buildAskSageMessage(messages) {
     const system = messages.find(m => m.role === 'system');
-    const turns  = messages.filter(m => m.role !== 'system' && m.role !== 'tool');
+    const turns  = messages.filter(m => m.role !== 'system');
 
     const systemPrompt = system?.content || null;
+
+    const roleMap = { user: 'me', assistant: 'gpt' };
 
     let messagePayload;
     if (turns.length === 0) {
@@ -53,14 +56,59 @@ function buildAskSageMessage(messages) {
     } else if (turns.length === 1 && turns[0].role === 'user') {
         messagePayload = turns[0].content || '';
     } else {
-        const roleMap = { user: 'me', assistant: 'gpt' };
-        messagePayload = turns.map(m => ({
-            user: roleMap[m.role] || 'me',
-            message: m.content || ''
-        }));
+        messagePayload = turns.map(m => {
+            if (m.role === 'tool') {
+                return { user: 'me', message: `[Tool result: ${m.name || 'tool'}]\n${m.content || ''}` };
+            }
+            return { user: roleMap[m.role] || 'me', message: m.content || '' };
+        });
     }
 
     return { messagePayload, systemPrompt };
+}
+
+// Build a text block that instructs the LLM how to call tools when native
+// function-calling is not available (prompt-injection mode).
+function buildToolsPrompt(tools) {
+    const schemas = tools.map(t => ({
+        name:        t.function.name,
+        description: t.function.description,
+        parameters:  t.function.parameters
+    }));
+    return `## Tool Use Instructions
+To call a tool, respond with ONLY this JSON (no other text):
+{"tool_calls":[{"id":"tc1","type":"function","function":{"name":"TOOL_NAME","arguments":"{\"param\":\"value\"}"}}]}
+After receiving a tool result (prefixed [Tool result:]), continue reasoning and call another tool or provide your final answer.
+
+Available tools:
+${JSON.stringify(schemas, null, 2)}`;
+}
+
+// Try to extract an OpenAI-format tool_calls array from a plain-text LLM response.
+function parseTextToolCalls(text) {
+    const trimmed = (text || '').trim();
+    // Case 1: entire response is a JSON object with tool_calls
+    try {
+        const obj = JSON.parse(trimmed);
+        if (Array.isArray(obj.tool_calls) && obj.tool_calls.length > 0) return obj.tool_calls;
+    } catch {}
+    // Case 2: fenced JSON code block
+    const fence = trimmed.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (fence) {
+        try {
+            const obj = JSON.parse(fence[1]);
+            if (Array.isArray(obj.tool_calls) && obj.tool_calls.length > 0) return obj.tool_calls;
+        } catch {}
+    }
+    // Case 3: inline JSON object containing tool_calls anywhere in the text
+    const inline = trimmed.match(/\{"tool_calls"\s*:\s*\[[\s\S]*?\]\s*\}/);
+    if (inline) {
+        try {
+            const obj = JSON.parse(inline[0]);
+            if (Array.isArray(obj.tool_calls) && obj.tool_calls.length > 0) return obj.tool_calls;
+        } catch {}
+    }
+    return null;
 }
 
 module.exports = {
@@ -92,16 +140,27 @@ module.exports = {
         }
     },
 
-    async chat(server, endpoint, { messages, onToken, signal, model }) {
+    async chat(server, endpoint, { messages, tools, onToken, signal, model, toolCallMode }) {
         const url  = buildUrl(server, endpoint, 'query', '/server/query');
         const opts = endpoint.adapterOptions || {};
+        const mode = toolCallMode || 'api';
 
         const { messagePayload, systemPrompt: systemFromMessages } = buildAskSageMessage(messages);
-        const finalSystemPrompt = opts.system_prompt || systemFromMessages || null;
+        let finalSystemPrompt = opts.system_prompt || systemFromMessages || null;
+
+        // In prompt mode, append tool schemas to the system prompt
+        if (mode === 'prompt' && tools?.length) {
+            finalSystemPrompt = ((finalSystemPrompt || '') + '\n\n' + buildToolsPrompt(tools)).trim();
+        }
 
         const body = { message: messagePayload, model, temperature: 0.1 };
 
         if (finalSystemPrompt)            body.system_prompt    = finalSystemPrompt;
+        // In api mode, send tool definitions natively
+        if (mode === 'api' && tools?.length) {
+            body.tools       = tools;
+            body.tool_choice = 'auto';
+        }
         if (opts.persona         != null) body.persona          = opts.persona;
         if (opts.dataset         != null) body.dataset          = opts.dataset;
         if (opts.live            != null) body.live             = opts.live;
@@ -125,10 +184,21 @@ module.exports = {
         const data = await collectBody(res);
         logger.verbose('RESPONSE', data);
 
-        const text  = data.message || data.response || data.text || data.content || data.answer || '';
+        let text  = data.message || data.response || data.text || data.content || data.answer || '';
         const usage = data.usage || null;
         const uuid  = data.uuid  || null;
-        const reply = { role: 'assistant', content: text };
+
+        // Resolve tool calls: native response field (api mode) or parsed from text (prompt mode)
+        let toolCalls = null;
+        if (mode === 'api' && Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
+            toolCalls = data.tool_calls;
+        } else if (mode === 'prompt') {
+            toolCalls = parseTextToolCalls(text);
+            if (toolCalls) text = null; // suppress raw JSON from being shown as chat text
+        }
+
+        const reply = { role: 'assistant', content: text || null };
+        if (toolCalls) reply.tool_calls = toolCalls;
 
         if (text && onToken) onToken(text);
 
