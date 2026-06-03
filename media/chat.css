@@ -523,6 +523,73 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 }
 .open-settings-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 
+/* ── Config item lists (servers / endpoints) ───────────────────────────────── */
+.config-section-header { display: flex; align-items: center; justify-content: space-between; }
+
+.link-btn {
+    font-size: 11px; background: transparent; border: none;
+    color: var(--vscode-textLink-foreground); cursor: pointer; padding: 0;
+}
+.link-btn:hover { text-decoration: underline; }
+
+.config-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.2));
+    font-size: 12px;
+}
+.config-item-name {
+    font-weight: 600; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; max-width: 80px; flex-shrink: 0;
+}
+.config-item-detail {
+    flex: 1; color: var(--vscode-descriptionForeground); font-size: 11px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.config-edit-btn, .config-del-btn {
+    flex-shrink: 0; background: transparent; border: none;
+    color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 12px;
+    padding: 1px 3px; opacity: 0; border-radius: 2px;
+}
+.config-item:hover .config-edit-btn,
+.config-item:hover .config-del-btn { opacity: 1; }
+.config-edit-btn:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
+.config-del-btn:hover  { color: var(--vscode-errorForeground, #f66); }
+
+.config-edit-form {
+    display: flex; flex-direction: column; gap: 5px;
+    padding: 6px 0 8px;
+    border-bottom: 1px solid var(--vscode-widget-border, #444);
+}
+.config-edit-form input[type="text"],
+.config-edit-form input[type="password"],
+.config-edit-form select {
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, #555);
+    border-radius: 2px; padding: 3px 5px; font-size: 11px; width: 100%;
+}
+.config-edit-form input:focus, .config-edit-form select:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+}
+.config-edit-form details { margin-top: 2px; }
+.config-edit-form summary {
+    font-size: 11px; color: var(--vscode-descriptionForeground); cursor: pointer;
+}
+.config-form-actions { display: flex; gap: 6px; margin-top: 2px; }
+.config-save-btn {
+    padding: 2px 10px; font-size: 11px;
+    background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+    border: none; border-radius: 2px; cursor: pointer;
+}
+.config-save-btn:hover { background: var(--vscode-button-hoverBackground); }
+.config-cancel-btn {
+    padding: 2px 10px; font-size: 11px;
+    background: transparent; color: var(--vscode-foreground);
+    border: 1px solid var(--vscode-widget-border, #555); border-radius: 2px; cursor: pointer;
+}
+.config-cancel-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+
 /* ── Message footer (timestamp + action buttons) ───────────────────────────── */
 .msg-footer {
     display: flex;

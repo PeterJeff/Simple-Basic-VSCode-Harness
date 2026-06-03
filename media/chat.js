@@ -19,6 +19,7 @@
         messages:         [],      // { id, role, raw, toolCalls:[], pending? }
         toolPermissions:  {},
         toolDefs:         [],
+        servers:          [],
         endpoints:        [],
         activeEndpoint:   '',
         models:           [],
@@ -110,6 +111,20 @@
         </div>
       </div>
       <div class="settings-group">
+        <div class="config-section-header">
+          <label>Servers</label>
+          <button class="link-btn" id="add-server-btn">+ Add</button>
+        </div>
+        <div id="server-list"></div>
+      </div>
+      <div class="settings-group">
+        <div class="config-section-header">
+          <label>Endpoints</label>
+          <button class="link-btn" id="add-endpoint-btn">+ Add</button>
+        </div>
+        <div id="endpoint-list"></div>
+      </div>
+      <div class="settings-group">
         <label>Tool Permissions</label>
         <table class="perm-table">
           <thead><tr><th>Tool</th><th>Permission</th></tr></thead>
@@ -152,6 +167,10 @@
         setVerbose:       q('#set-verbose'),
         permTbody:        q('#perm-tbody'),
         openVscodeSettings: q('#open-vscode-settings'),
+        serverList:         q('#server-list'),
+        addServerBtn:       q('#add-server-btn'),
+        endpointList:       q('#endpoint-list'),
+        addEndpointBtn:     q('#add-endpoint-btn'),
     };
 
     function q(sel) { return document.querySelector(sel); }
@@ -646,6 +665,176 @@
         }
     }
 
+    // ── Servers & Endpoints management ──────────────────────────────────────
+
+    function saveServers() {
+        vscode.postMessage({ type: 'updateSetting', key: 'servers', value: state.servers });
+    }
+
+    function saveEndpoints() {
+        vscode.postMessage({ type: 'updateSetting', key: 'endpoints', value: state.endpoints });
+    }
+
+    function makeServerForm(server, onSave, onCancel) {
+        const form = document.createElement('div');
+        form.className = 'config-edit-form';
+        form.innerHTML = `
+<input type="text" class="ef-name" placeholder="Name (e.g. Local)" value="${esc(server.name || '')}">
+<input type="text" class="ef-url" placeholder="URL (e.g. http://localhost:11434/v1)" value="${esc(server.url || '')}">
+<input type="password" class="ef-key" placeholder="API Key (optional)" value="${esc(server.apiKey || '')}">
+<div class="config-form-actions">
+  <button class="config-save-btn">Save</button>
+  <button class="config-cancel-btn">Cancel</button>
+</div>`;
+        form.querySelector('.config-save-btn').addEventListener('click', () => {
+            const name = form.querySelector('.ef-name').value.trim();
+            const url  = form.querySelector('.ef-url').value.trim();
+            if (!name || !url) return;
+            onSave({ name, url, apiKey: form.querySelector('.ef-key').value });
+        });
+        form.querySelector('.config-cancel-btn').addEventListener('click', onCancel);
+        return form;
+    }
+
+    function renderServerList() {
+        el.serverList.innerHTML = '';
+        state.servers.forEach((srv, i) => {
+            const row = document.createElement('div');
+            row.className = 'config-item';
+            row.innerHTML = `
+<span class="config-item-name" title="${esc(srv.name)}">${esc(srv.name)}</span>
+<span class="config-item-detail" title="${esc(srv.url)}">${esc(srv.url)}</span>
+<button class="config-edit-btn" title="Edit">✎</button>
+<button class="config-del-btn" title="Delete">✕</button>`;
+            row.querySelector('.config-del-btn').addEventListener('click', () => {
+                state.servers.splice(i, 1);
+                saveServers();
+                renderServerList();
+            });
+            row.querySelector('.config-edit-btn').addEventListener('click', () => {
+                const form = makeServerForm(srv, (updated) => {
+                    state.servers[i] = updated;
+                    saveServers();
+                    renderServerList();
+                }, renderServerList);
+                row.replaceWith(form);
+                form.querySelector('.ef-name').focus();
+            });
+            el.serverList.appendChild(row);
+        });
+    }
+
+    el.addServerBtn.addEventListener('click', () => {
+        const form = makeServerForm({ name: '', url: '', apiKey: '' }, (newSrv) => {
+            state.servers.push(newSrv);
+            saveServers();
+            renderServerList();
+        }, renderServerList);
+        el.serverList.appendChild(form);
+        form.querySelector('.ef-name').focus();
+    });
+
+    function makeEndpointForm(ep, onSave, onCancel) {
+        const serverOptions = state.servers.map(s =>
+            `<option value="${esc(s.name)}" ${s.name === ep.server ? 'selected' : ''}>${esc(s.name)}</option>`
+        ).join('');
+        const adapters = ['openai', 'gemini', 'gemini-jank', 'ask-sage'];
+        const adapterOptions = adapters.map(a =>
+            `<option value="${a}" ${a === ep.adapter ? 'selected' : ''}>${a}</option>`
+        ).join('');
+        const streamingVal = ep.streaming === true ? 'true' : ep.streaming === false ? 'false' : 'default';
+
+        const form = document.createElement('div');
+        form.className = 'config-edit-form';
+        form.innerHTML = `
+<input type="text" class="ef-name" placeholder="Name (e.g. Local OpenAI)" value="${esc(ep.name || '')}">
+<select class="ef-server">${serverOptions || '<option value="">-- no servers --</option>'}</select>
+<select class="ef-adapter">${adapterOptions}</select>
+<details>
+  <summary>Advanced</summary>
+  <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">
+    <input type="text" class="ef-model" placeholder="Model override (optional)" value="${esc(ep.model || '')}">
+    <input type="text" class="ef-chat-path" placeholder="Chat path override (e.g. /v1/chat/completions)" value="${esc((ep.pathOverrides || {}).chat || '')}">
+    <input type="text" class="ef-models-path" placeholder="Models path override (e.g. /v1/models)" value="${esc((ep.pathOverrides || {}).models || '')}">
+    <select class="ef-streaming">
+      <option value="default" ${streamingVal === 'default' ? 'selected' : ''}>Streaming: default</option>
+      <option value="true"    ${streamingVal === 'true'    ? 'selected' : ''}>Streaming: on</option>
+      <option value="false"   ${streamingVal === 'false'   ? 'selected' : ''}>Streaming: off</option>
+    </select>
+  </div>
+</details>
+<div class="config-form-actions">
+  <button class="config-save-btn">Save</button>
+  <button class="config-cancel-btn">Cancel</button>
+</div>`;
+        form.querySelector('.config-save-btn').addEventListener('click', () => {
+            const name = form.querySelector('.ef-name').value.trim();
+            if (!name) return;
+            const chatPath   = form.querySelector('.ef-chat-path').value.trim();
+            const modelsPath = form.querySelector('.ef-models-path').value.trim();
+            const streamSel  = form.querySelector('.ef-streaming').value;
+            const built = {
+                name,
+                server:  form.querySelector('.ef-server').value,
+                adapter: form.querySelector('.ef-adapter').value,
+            };
+            const modelVal = form.querySelector('.ef-model').value.trim();
+            if (modelVal) built.model = modelVal;
+            if (chatPath || modelsPath) {
+                built.pathOverrides = {};
+                if (chatPath)   built.pathOverrides.chat   = chatPath;
+                if (modelsPath) built.pathOverrides.models = modelsPath;
+            }
+            if (streamSel !== 'default') built.streaming = streamSel === 'true';
+            onSave(built);
+        });
+        form.querySelector('.config-cancel-btn').addEventListener('click', onCancel);
+        return form;
+    }
+
+    function renderEndpointList() {
+        el.endpointList.innerHTML = '';
+        state.endpoints.forEach((ep, i) => {
+            const row = document.createElement('div');
+            row.className = 'config-item';
+            const detail = `${esc(ep.server)} → ${esc(ep.adapter)}`;
+            row.innerHTML = `
+<span class="config-item-name" title="${esc(ep.name)}">${esc(ep.name)}</span>
+<span class="config-item-detail" title="${detail}">${detail}</span>
+<button class="config-edit-btn" title="Edit">✎</button>
+<button class="config-del-btn" title="Delete">✕</button>`;
+            row.querySelector('.config-del-btn').addEventListener('click', () => {
+                const wasActive = state.endpoints[i].name === state.activeEndpoint;
+                state.endpoints.splice(i, 1);
+                saveEndpoints();
+                if (wasActive && state.endpoints.length > 0) {
+                    vscode.postMessage({ type: 'setEndpoint', name: state.endpoints[0].name });
+                }
+                renderEndpointList();
+            });
+            row.querySelector('.config-edit-btn').addEventListener('click', () => {
+                const form = makeEndpointForm(ep, (updated) => {
+                    state.endpoints[i] = updated;
+                    saveEndpoints();
+                    renderEndpointList();
+                }, renderEndpointList);
+                row.replaceWith(form);
+                form.querySelector('.ef-name').focus();
+            });
+            el.endpointList.appendChild(row);
+        });
+    }
+
+    el.addEndpointBtn.addEventListener('click', () => {
+        const form = makeEndpointForm({ name: '', server: state.servers[0]?.name || '', adapter: 'openai' }, (newEp) => {
+            state.endpoints.push(newEp);
+            saveEndpoints();
+            renderEndpointList();
+        }, renderEndpointList);
+        el.endpointList.appendChild(form);
+        form.querySelector('.ef-name').focus();
+    });
+
     el.setMaxIter.addEventListener('change', () => {
         const v = parseInt(el.setMaxIter.value);
         if (!isNaN(v)) vscode.postMessage({ type: 'updateSetting', key: 'maxIterations', value: v });
@@ -702,6 +891,7 @@
             case 'init': {
                 state.sessions       = msg.sessions       || [];
                 state.mode           = msg.mode           || 'chat';
+                state.servers        = msg.servers        || [];
                 state.endpoints      = msg.endpoints      || [];
                 state.activeEndpoint = msg.activeEndpoint || '';
                 state.currentModel   = msg.model          || '';
@@ -727,6 +917,8 @@
                 populateEndpoints();
                 populateModels();
                 buildPermTable();
+                renderServerList();
+                renderEndpointList();
                 break;
             }
 
@@ -738,6 +930,7 @@
             }
 
             case 'configUpdate': {
+                state.servers         = msg.servers         || state.servers;
                 state.endpoints       = msg.endpoints       || state.endpoints;
                 state.activeEndpoint  = msg.activeEndpoint  || state.activeEndpoint;
                 state.currentModel    = msg.model           || state.currentModel;
@@ -753,6 +946,8 @@
                 }
                 populateEndpoints();
                 buildPermTable();
+                renderServerList();
+                renderEndpointList();
                 break;
             }
 

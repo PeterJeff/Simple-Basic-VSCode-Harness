@@ -67,6 +67,7 @@ class ChatViewProvider {
         certLoader.configure({ enabled: cfg.get('winCertStore', true) });
         this.sendToWebview({
             type: 'configUpdate',
+            servers: api.getServers(),
             endpoints: api.getEndpoints(),
             activeEndpoint: cfg.get('activeEndpoint', ''),
             model: cfg.get('model', ''),
@@ -179,6 +180,7 @@ class ChatViewProvider {
             sessions: this._history.getSessions(),
             session: this._session,
             mode: this._mode,
+            servers: api.getServers(),
             endpoints: api.getEndpoints(),
             activeEndpoint: cfg.get('activeEndpoint', ''),
             model: cfg.get('model', ''),

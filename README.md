@@ -132,6 +132,8 @@ When you send, the extension reads the file contents and injects them into the A
 
 ## Settings Reference
 
+Servers and endpoints can be managed directly in the **⚙ Settings panel** — click ⚙ in the toolbar, then use the Servers and Endpoints sections to add, edit, or delete entries without touching JSON. All other settings below are also editable there or via VS Code settings.
+
 All settings are under the `standaloneAgent` namespace in VS Code settings.
 
 | Setting | Type | Default | Description |
