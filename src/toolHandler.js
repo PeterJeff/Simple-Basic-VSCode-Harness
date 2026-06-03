@@ -96,9 +96,18 @@ const ALL_TOOLS = [
 
 const READ_ONLY_TOOLS = ['read_file', 'list_directory', 'search_files', 'get_diagnostics'];
 
-// ── Permission check ──────────────────────────────────────────────────────────
+// ── Approval callback (registered by chatProvider for in-chat approval UI) ────
+// Signature: (toolName, callId, args, msgId, rawCall) → Promise<'allow-once'|'allow-always'|'deny'>
+let _approvalCallback = null;
 
-async function checkPermission(toolName) {
+function setApprovalCallback(fn) {
+    _approvalCallback = fn;
+}
+
+// ── Request approval for a tool call ──────────────────────────────────────────
+// Returns 'allow' or 'deny'. Persists 'allow-always' decisions automatically.
+
+async function requestApproval(toolName, callId, args, msgId, rawCall) {
     const cfg = vscode.workspace.getConfiguration('standaloneAgent');
     const perms = cfg.get('toolPermissions', {});
     const level = perms[toolName] || 'ask';
@@ -106,20 +115,40 @@ async function checkPermission(toolName) {
     if (level === 'allow') return 'allow';
     if (level === 'deny')  return 'deny';
 
-    // 'ask'
-    const choice = await vscode.window.showInformationMessage(
-        `Agent wants to call: ${toolName}`,
-        { modal: true },
-        'Allow Once', 'Allow Always', 'Deny'
-    );
+    // 'ask' — need user input
+    let choice;
+    if (_approvalCallback) {
+        choice = await _approvalCallback(toolName, callId, args, msgId, rawCall);
+    } else {
+        const picked = await vscode.window.showInformationMessage(
+            `Agent wants to call: ${toolName}`,
+            { modal: true },
+            'Allow Once', 'Allow Always', 'Deny'
+        );
+        choice = picked === 'Allow Always' ? 'allow-always'
+               : picked === 'Allow Once'   ? 'allow-once'
+               : 'deny';
+    }
 
-    if (choice === 'Allow Always') {
+    if (choice === 'allow-always') {
         const updated = { ...perms, [toolName]: 'allow' };
         await cfg.update('toolPermissions', updated, vscode.ConfigurationTarget.Global);
         return 'allow';
     }
-    if (choice === 'Allow Once') return 'allow';
+    if (choice === 'allow-once') return 'allow';
     return 'deny';
+}
+
+// ── Execute tool directly (no permission check) ───────────────────────────────
+
+async function executeDirect(toolName, args) {
+    logger.log(`TOOL ${toolName}(${JSON.stringify(args)})`);
+    try {
+        return await _run(toolName, args);
+    } catch (e) {
+        logger.error(`TOOL ${toolName}`, e);
+        return { error: e.message };
+    }
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -130,20 +159,13 @@ function getDefinitions(mode) {
     return ALL_TOOLS;
 }
 
-async function execute(toolName, args) {
-    const decision = await checkPermission(toolName);
+// Backwards-compatible wrapper used by any code that hasn't been updated.
+async function execute(toolName, args, callId) {
+    const decision = await requestApproval(toolName, callId || `tc_${Date.now()}`, args);
     if (decision === 'deny') {
         return { error: `Tool '${toolName}' was denied by permissions.` };
     }
-
-    logger.log(`TOOL ${toolName}(${JSON.stringify(args)})`);
-
-    try {
-        return await _run(toolName, args);
-    } catch (e) {
-        logger.error(`TOOL ${toolName}`, e);
-        return { error: e.message };
-    }
+    return executeDirect(toolName, args);
 }
 
 // ── Tool implementations ───────────────────────────────────────────────────────
@@ -166,7 +188,6 @@ async function _run(toolName, args) {
             const target = abs(args.path);
             fs.mkdirSync(path.dirname(target), { recursive: true });
             fs.writeFileSync(target, args.content, 'utf8');
-            // Notify VSCode so editors refresh
             vscode.workspace.fs.stat(vscode.Uri.file(target)).then(() => {}, () => {});
             return { success: true, path: args.path };
         }
@@ -259,4 +280,4 @@ async function _run(toolName, args) {
     }
 }
 
-module.exports = { getDefinitions, execute, ALL_TOOLS };
+module.exports = { getDefinitions, execute, executeDirect, requestApproval, setApprovalCallback, ALL_TOOLS };

@@ -9,27 +9,28 @@
 
     // ── State ────────────────────────────────────────────────────────────────
     const state = {
-        mode:             'chat',
-        isProcessing:     false,
-        markdownEnabled:  true,
-        streamingEnabled: true,
-        enterToSend:      true,     // true = Enter sends; false = Shift+Enter sends
-        verbose:          false,
-        sessions:         [],
-        messages:         [],      // { id, role, raw, toolCalls:[], pending? }
-        toolPermissions:  {},
-        toolDefs:         [],
-        servers:          [],
-        endpoints:        [],
-        activeEndpoint:   '',
-        models:           [],
-        currentModel:     '',
-        atQuery:          '',
-        atCursorStart:    -1,
-        atDropdownItems:  [],
-        atSelectedIdx:    -1,
-        usageByMsgId:     {},
-        toolCallMode:     'api',
+        mode:                 'chat',
+        isProcessing:         false,
+        markdownEnabled:      true,
+        streamingEnabled:     true,
+        enterToSend:          true,
+        verbose:              false,
+        sessions:             [],
+        messages:             [],      // { id, role, raw, toolCalls:[], pending? }
+        toolPermissions:      {},
+        toolDefs:             [],
+        servers:              [],
+        endpoints:            [],
+        activeEndpoint:       '',
+        models:               [],
+        currentModel:         '',
+        atQuery:              '',
+        atCursorStart:        -1,
+        atDropdownItems:      [],
+        atSelectedIdx:        -1,
+        usageByMsgId:         {},
+        toolCallMode:         'api',
+        supportsMonthlyUsage: false,
     };
 
     // ── Build DOM ────────────────────────────────────────────────────────────
@@ -149,36 +150,36 @@
 
     // ── Element refs ─────────────────────────────────────────────────────────
     const el = {
-        modeSelect:       q('#mode-select'),
-        endpointSelect:   q('#endpoint-select'),
-        modelSelect:      q('#model-select'),
-        refreshModels:    q('#refresh-models-btn'),
-        historyBtn:       q('#history-btn'),
-        settingsBtn:      q('#settings-btn'),
-        messages:         q('#messages'),
-        statusText:       q('#status-text'),
-        stopBtn:          q('#stop-btn'),
-        msgInput:         q('#msg-input'),
-        sendBtn:          q('#send-btn'),
-        mdToggle:         q('#md-toggle'),
-        streamToggle:     q('#stream-toggle'),
-        tcModeBtn:        q('#tc-mode-btn'),
-        iterBadge:        q('#iter-badge'),
-        atDropdown:       q('#at-dropdown'),
-        historyPanel:     q('#history-panel'),
-        historyClose:     q('#history-close'),
-        sessionList:      q('#session-list'),
-        settingsPanel:    q('#settings-panel'),
-        settingsClose:    q('#settings-close'),
-        setMaxIter:       q('#set-max-iter'),
-        setSystemPrompt:  q('#set-system-prompt'),
-        setEnterToSend:   q('#set-enter-to-send'),
-        enterHint:        q('#enter-hint'),
-        setVerbose:       q('#set-verbose'),
-        permTbody:        q('#perm-tbody'),
-        openVscodeSettings: q('#open-vscode-settings'),
-        serverList:         q('#server-list'),
-        addServerBtn:       q('#add-server-btn'),
+        modeSelect:           q('#mode-select'),
+        endpointSelect:       q('#endpoint-select'),
+        modelSelect:          q('#model-select'),
+        refreshModels:        q('#refresh-models-btn'),
+        historyBtn:           q('#history-btn'),
+        settingsBtn:          q('#settings-btn'),
+        messages:             q('#messages'),
+        statusText:           q('#status-text'),
+        stopBtn:              q('#stop-btn'),
+        msgInput:             q('#msg-input'),
+        sendBtn:              q('#send-btn'),
+        mdToggle:             q('#md-toggle'),
+        streamToggle:         q('#stream-toggle'),
+        tcModeBtn:            q('#tc-mode-btn'),
+        iterBadge:            q('#iter-badge'),
+        atDropdown:           q('#at-dropdown'),
+        historyPanel:         q('#history-panel'),
+        historyClose:         q('#history-close'),
+        sessionList:          q('#session-list'),
+        settingsPanel:        q('#settings-panel'),
+        settingsClose:        q('#settings-close'),
+        setMaxIter:           q('#set-max-iter'),
+        setSystemPrompt:      q('#set-system-prompt'),
+        setEnterToSend:       q('#set-enter-to-send'),
+        enterHint:            q('#enter-hint'),
+        setVerbose:           q('#set-verbose'),
+        permTbody:            q('#perm-tbody'),
+        openVscodeSettings:   q('#open-vscode-settings'),
+        serverList:           q('#server-list'),
+        addServerBtn:         q('#add-server-btn'),
         endpointList:         q('#endpoint-list'),
         addEndpointBtn:       q('#add-endpoint-btn'),
         monthlyUsageBtn:      q('#monthly-usage-btn'),
@@ -190,7 +191,6 @@
     function q(sel) { return document.querySelector(sel); }
 
     // ── Markdown renderer ────────────────────────────────────────────────────
-    // Uses window.marked if available (place marked.min.js in media/), otherwise falls back.
 
     function renderMarkdown(raw) {
         if (!raw) return '';
@@ -205,58 +205,37 @@
 
     function builtinMd(text) {
         let h = esc(text);
-
-        // Fenced code blocks
         h = h.replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
             return `<pre><button class="copy-btn" onclick="copyCode(this)">Copy</button>`
                  + `<code class="lang-${esc(lang)}">${code}</code></pre>`;
         });
-
-        // Inline code
         h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-
-        // Headers
         h = h.replace(/^###### (.+)$/gm, '<h6>$1</h6>');
         h = h.replace(/^##### (.+)$/gm,  '<h5>$1</h5>');
         h = h.replace(/^#### (.+)$/gm,   '<h4>$1</h4>');
         h = h.replace(/^### (.+)$/gm,    '<h3>$1</h3>');
         h = h.replace(/^## (.+)$/gm,     '<h2>$1</h2>');
         h = h.replace(/^# (.+)$/gm,      '<h1>$1</h1>');
-
-        // Bold / italic
         h = h.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
         h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
         h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
-
-        // HR
         h = h.replace(/^---+$/gm, '<hr>');
-
-        // Blockquote
         h = h.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-
-        // Unordered lists
         h = h.replace(/((?:^- .+\n?)+)/gm, (block) => {
             const items = block.trim().split('\n').map(l => `<li>${l.replace(/^- /, '')}</li>`).join('');
             return `<ul>${items}</ul>`;
         });
-
-        // Ordered lists
         h = h.replace(/((?:^\d+\. .+\n?)+)/gm, (block) => {
             const items = block.trim().split('\n').map(l => `<li>${l.replace(/^\d+\. /, '')}</li>`).join('');
             return `<ol>${items}</ol>`;
         });
-
-        // Links
         h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-
-        // Paragraphs: double newlines → <p>
         h = h.split(/\n{2,}/).map(para => {
             para = para.trim();
             if (!para) return '';
             if (/^<(h[1-6]|ul|ol|pre|hr|blockquote)/.test(para)) return para;
             return `<p>${para.replace(/\n/g, '<br>')}</p>`;
         }).join('\n');
-
         return h;
     }
 
@@ -273,7 +252,6 @@
         return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
     }
 
-    // Global for copy button (inline onclick)
     window.copyCode = function(btn) {
         const code = btn.nextElementSibling?.textContent || '';
         navigator.clipboard?.writeText(code).then(() => {
@@ -282,17 +260,75 @@
         });
     };
 
+    // ── Tool call summary (human-readable one-liner for approval cards) ───────
+
+    function toolCallSummary(name, args) {
+        switch (name) {
+            case 'read_file':       return args.path || '';
+            case 'write_file':      return `${args.path || ''} (${String(args.content || '').length} chars)`;
+            case 'list_directory':  return args.path || '.';
+            case 'search_files':    return `"${args.pattern || ''}"${args.glob ? ` in ${args.glob}` : ''}`;
+            case 'get_diagnostics': return args.path || 'workspace';
+            case 'run_terminal':    return String(args.command || '').slice(0, 80);
+            default: {
+                const j = JSON.stringify(args);
+                return (j && j !== '{}') ? j.slice(0, 60) : '';
+            }
+        }
+    }
+
     // ── Message rendering ────────────────────────────────────────────────────
 
     function _applyUsageBadge(msgEl, usage) {
-        if (!usage) return;
+        if (!usage || typeof usage !== 'object') return;
         msgEl.querySelector('.usage-badge')?.remove();
-        const total = usage.total_tokens || usage.totalTokens
-                   || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)) || null;
-        if (!total) return;
+
+        const promptTok     = usage.prompt_tokens     ?? usage.input_tokens    ?? null;
+        const completionTok = usage.completion_tokens ?? usage.output_tokens   ?? null;
+        const totalTok      = usage.total_tokens      ?? usage.totalTokens
+                           ?? (promptTok != null && completionTok != null ? promptTok + completionTok : null);
+
+        const inputCost  = usage.input_cost   ?? usage.prompt_cost       ?? usage.token_input_cost  ?? usage.cost_input  ?? null;
+        const outputCost = usage.output_cost  ?? usage.completion_cost   ?? usage.token_output_cost ?? usage.cost_output ?? null;
+        const tokenCost  = usage.token_cost   ?? null;  // Ask Sage flat "cost of this call in tokens"
+        const totalCost  = usage.total_cost   ?? usage.cost              ?? usage.totalCost         ?? null;
+
+        const hasCost = inputCost != null || outputCost != null || totalCost != null || tokenCost != null;
+        if (totalTok == null && promptTok == null && !hasCost) return;
+
         const badge = document.createElement('div');
         badge.className = 'usage-badge';
-        badge.textContent = `${total.toLocaleString()} tokens`;
+
+        // Token counts line
+        if (totalTok != null || promptTok != null) {
+            const tokenLine = document.createElement('div');
+            tokenLine.className = 'usage-line usage-tokens';
+            const parts = [];
+            if (totalTok != null) parts.push(Number(totalTok).toLocaleString() + ' tokens');
+            if (promptTok != null) parts.push('↑' + Number(promptTok).toLocaleString());
+            if (completionTok != null) parts.push('↓' + Number(completionTok).toLocaleString());
+            tokenLine.textContent = parts.join('  ');
+            badge.appendChild(tokenLine);
+        }
+
+        // Cost line (dollar amounts)
+        if (hasCost) {
+            const costLine = document.createElement('div');
+            costLine.className = 'usage-line usage-cost';
+            const parts = [];
+            if (tokenCost != null)  parts.push('tc:' + Number(tokenCost).toLocaleString());
+            if (inputCost != null)  parts.push('in $' + Number(inputCost).toFixed(6));
+            if (outputCost != null) parts.push('out $' + Number(outputCost).toFixed(6));
+            if (totalCost != null && (inputCost != null || outputCost != null)) {
+                parts.push('= $' + Number(totalCost).toFixed(6));
+            } else if (totalCost != null) {
+                parts.push('$' + Number(totalCost).toFixed(6));
+            }
+            costLine.textContent = parts.join('  ');
+            badge.appendChild(costLine);
+        }
+
+        if (badge.children.length === 0) return;
         const footer = msgEl.querySelector('.msg-footer');
         footer ? msgEl.insertBefore(badge, footer) : msgEl.appendChild(badge);
     }
@@ -408,6 +444,122 @@
         return block;
     }
 
+    // ── Tool approval card ────────────────────────────────────────────────────
+
+    function createApprovalCard(msg) {
+        const { callId, toolName, args, rawCall } = msg;
+        const summary = toolCallSummary(toolName, args || {});
+        const argsJson = JSON.stringify(args || {}, null, 2);
+        const rawJson  = JSON.stringify(rawCall || { name: toolName, arguments: args }, null, 2);
+
+        const card = document.createElement('div');
+        card.className = 'tool-approval-card';
+        card.dataset.callid = callId;
+
+        // Header
+        const header = document.createElement('div');
+        header.className = 'tool-approval-header';
+
+        const icon = document.createElement('span');
+        icon.className = 'tap-icon';
+        icon.textContent = '?';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'tap-name';
+        nameSpan.textContent = toolName;
+
+        const summarySpan = document.createElement('span');
+        summarySpan.className = 'tap-summary';
+        summarySpan.textContent = summary;
+
+        const statusSpan = document.createElement('span');
+        statusSpan.className = 'tool-approval-status';
+        statusSpan.textContent = 'awaiting approval';
+
+        const expandBtn = document.createElement('button');
+        expandBtn.className = 'tap-expand-btn';
+        expandBtn.title = 'Show details';
+        expandBtn.textContent = '▸';
+
+        const rawBtn = document.createElement('button');
+        rawBtn.className = 'tap-rawbtn';
+        rawBtn.title = 'Open raw tool call in editor';
+        rawBtn.textContent = '⧉';
+
+        header.appendChild(icon);
+        header.appendChild(nameSpan);
+        if (summary) header.appendChild(summarySpan);
+        header.appendChild(statusSpan);
+        header.appendChild(expandBtn);
+        header.appendChild(rawBtn);
+
+        // Expandable body
+        const body = document.createElement('div');
+        body.className = 'tool-approval-body';
+        body.style.display = 'none';
+        const pre = document.createElement('pre');
+        pre.className = 'tap-pre';
+        pre.textContent = argsJson;
+        body.appendChild(pre);
+
+        // Actions
+        const actions = document.createElement('div');
+        actions.className = 'tool-approval-actions';
+
+        const allowOnceBtn   = document.createElement('button');
+        allowOnceBtn.className = 'tap-allow-once';
+        allowOnceBtn.textContent = 'Allow Once';
+
+        const allowAlwaysBtn = document.createElement('button');
+        allowAlwaysBtn.className = 'tap-allow-always';
+        allowAlwaysBtn.textContent = 'Allow Always';
+
+        const denyBtn        = document.createElement('button');
+        denyBtn.className = 'tap-deny';
+        denyBtn.textContent = 'Deny';
+
+        actions.appendChild(allowOnceBtn);
+        actions.appendChild(allowAlwaysBtn);
+        actions.appendChild(denyBtn);
+
+        card.appendChild(header);
+        card.appendChild(body);
+        card.appendChild(actions);
+
+        // Event handlers
+        expandBtn.addEventListener('click', () => {
+            const open = body.style.display !== 'none';
+            body.style.display = open ? 'none' : 'block';
+            expandBtn.textContent = open ? '▸' : '▾';
+            expandBtn.title = open ? 'Show details' : 'Hide details';
+        });
+
+        rawBtn.addEventListener('click', () => {
+            vscode.postMessage({ type: 'openTextWindow', content: rawJson, title: `Tool: ${toolName}` });
+        });
+
+        const respond = (decision) => {
+            if (decision === 'deny') {
+                // Mark the card as denied visually
+                card.classList.add('tap-denied');
+                actions.remove();
+                statusSpan.textContent = '✕ Denied';
+                icon.textContent = '✕';
+                icon.style.color = 'var(--vscode-errorForeground, #f66)';
+            } else {
+                // Approved — remove card; toolStart event will add the running tool block
+                card.remove();
+            }
+            vscode.postMessage({ type: 'toolApprovalResponse', callId, decision });
+        };
+
+        allowOnceBtn.addEventListener('click', () => respond('allow-once'));
+        allowAlwaysBtn.addEventListener('click', () => respond('allow-always'));
+        denyBtn.addEventListener('click', () => respond('deny'));
+
+        return card;
+    }
+
     function rerenderAll() {
         el.messages.innerHTML = '';
         for (const msg of state.messages) {
@@ -445,16 +597,13 @@
         if (idx === -1) return;
         const msg = state.messages[idx];
 
-        // Count user messages strictly before this one so host can slice correctly
         const userMsgIdx = state.messages.slice(0, idx).filter(m => m.role === 'user').length;
 
-        // Restore text to input
         el.msgInput.value = msg.raw;
         el.msgInput.style.height = 'auto';
         el.msgInput.style.height = Math.min(el.msgInput.scrollHeight, 160) + 'px';
         el.msgInput.focus();
 
-        // Truncate display and tell host to fork the session
         state.messages = state.messages.slice(0, idx);
         rerenderAll();
         vscode.postMessage({ type: 'fork', userMsgIdx });
@@ -462,7 +611,6 @@
 
     function handleRetry() {
         if (state.isProcessing) return;
-        // Remove trailing errors and any pending assistant bubble
         while (state.messages.length > 0) {
             const last = state.messages[state.messages.length - 1];
             if (last.role === 'error' || last.pending) { state.messages.pop(); }
@@ -562,15 +710,13 @@
             }
             if (e.key === 'Escape') { e.preventDefault(); closeAtDropdown(); return; }
         }
-        // Send key behaviour depends on enterToSend setting
-        const sendPressed  = state.enterToSend  ? (e.key === 'Enter'  && !e.shiftKey) : (e.key === 'Enter' && e.shiftKey);
+        const sendPressed = state.enterToSend ? (e.key === 'Enter' && !e.shiftKey) : (e.key === 'Enter' && e.shiftKey);
         if (sendPressed) {
             e.preventDefault();
             sendMessage();
         }
     });
 
-    // Auto-resize textarea
     el.msgInput.addEventListener('input', () => {
         el.msgInput.style.height = 'auto';
         el.msgInput.style.height = Math.min(el.msgInput.scrollHeight, 160) + 'px';
@@ -583,7 +729,6 @@
         const val = el.msgInput.value;
         const cursor = el.msgInput.selectionStart;
 
-        // Find the @ that's "active": scan back from cursor
         let atPos = -1;
         for (let i = cursor - 1; i >= 0; i--) {
             if (val[i] === '@') { atPos = i; break; }
@@ -593,7 +738,6 @@
         if (atPos === -1) { closeAtDropdown(); return; }
 
         const query = val.slice(atPos + 1, cursor);
-        // Only trigger if query has no spaces
         if (query.includes(' ') || query.includes('\n')) { closeAtDropdown(); return; }
 
         state.atCursorStart = atPos;
@@ -926,10 +1070,25 @@
                 `<option value="${esc(m)}" ${m === cur ? 'selected' : ''}>${esc(m)}</option>`
               ).join('');
         if (state.models.length > 0 && !cur) {
-            // Auto-select first
             el.modelSelect.selectedIndex = 0;
             vscode.postMessage({ type: 'setModel', model: el.modelSelect.value });
         }
+    }
+
+    // ── Monthly usage bar helpers ─────────────────────────────────────────────
+
+    function _showMonthlyUsageBar(text) {
+        el.monthlyUsageBar.style.display = 'flex';
+        if (text) el.monthlyUsageDisplay.textContent = text;
+    }
+
+    function _updateMonthlyUsageDisplay(data) {
+        const d = data || {};
+        const used  = d.response     || d.tokens_used || d.tokensUsed || d.used || d.count || '?';
+        const limit = d.token_limit   || d.tokenLimit  || d.limit || null;
+        el.monthlyUsageDisplay.textContent = limit
+            ? `${Number(used).toLocaleString()} / ${Number(limit).toLocaleString()} tokens this month`
+            : `${Number(used).toLocaleString()} tokens used this month`;
     }
 
     // ── Extension → webview messages ─────────────────────────────────────────
@@ -938,20 +1097,21 @@
         switch (msg.type) {
 
             case 'init': {
-                state.sessions       = msg.sessions       || [];
-                state.mode           = msg.mode           || 'chat';
-                state.servers        = msg.servers        || [];
-                state.endpoints      = msg.endpoints      || [];
-                state.activeEndpoint = msg.activeEndpoint || '';
-                state.currentModel   = msg.model          || '';
-                state.streamingEnabled = msg.streaming !== undefined ? msg.streaming : true;
-                state.enterToSend    = msg.enterToSend !== undefined ? msg.enterToSend : true;
-                state.verbose        = msg.verboseLogging || false;
-                state.toolPermissions= msg.toolPermissions|| {};
-                state.toolDefs       = msg.toolDefs       || [];
-                state.toolCallMode   = msg.askSageToolMode || 'api';
+                state.sessions            = msg.sessions       || [];
+                state.mode                = msg.mode           || 'chat';
+                state.servers             = msg.servers        || [];
+                state.endpoints           = msg.endpoints      || [];
+                state.activeEndpoint      = msg.activeEndpoint || '';
+                state.currentModel        = msg.model          || '';
+                state.streamingEnabled    = msg.streaming !== undefined ? msg.streaming : true;
+                state.enterToSend         = msg.enterToSend !== undefined ? msg.enterToSend : true;
+                state.verbose             = msg.verboseLogging || false;
+                state.toolPermissions     = msg.toolPermissions || {};
+                state.toolDefs            = msg.toolDefs       || [];
+                state.toolCallMode        = msg.askSageToolMode || 'api';
+                state.supportsMonthlyUsage = !!msg.supportsMonthlyUsage;
 
-                el.modeSelect.value  = state.mode;
+                el.modeSelect.value = state.mode;
                 el.setVerbose.checked = state.verbose;
                 el.setEnterToSend.checked = state.enterToSend;
                 el.enterHint.textContent = state.enterToSend
@@ -961,7 +1121,11 @@
                 el.tcModeBtn.textContent = state.toolCallMode === 'api' ? 'TC:API' : 'TC:TXT';
                 el.tcModeBtn.classList.toggle('active', state.toolCallMode === 'api');
 
-                // Load existing session messages if any
+                // Auto-show monthly usage bar when endpoint supports it
+                if (state.supportsMonthlyUsage) {
+                    _showMonthlyUsageBar('Loading usage…');
+                }
+
                 if (msg.session && msg.session.messages.length > 0) {
                     _loadMessages(msg.session.messages);
                 }
@@ -975,8 +1139,8 @@
             }
 
             case 'models': {
-                state.models      = msg.models  || [];
-                state.currentModel= msg.current || '';
+                state.models       = msg.models  || [];
+                state.currentModel = msg.current || '';
                 populateModels();
                 break;
             }
@@ -994,6 +1158,14 @@
                     state.toolCallMode = msg.askSageToolMode;
                     el.tcModeBtn.textContent = state.toolCallMode === 'api' ? 'TC:API' : 'TC:TXT';
                     el.tcModeBtn.classList.toggle('active', state.toolCallMode === 'api');
+                }
+                if (msg.supportsMonthlyUsage !== undefined) {
+                    state.supportsMonthlyUsage = !!msg.supportsMonthlyUsage;
+                    if (state.supportsMonthlyUsage) {
+                        _showMonthlyUsageBar('Loading usage…');
+                    } else {
+                        el.monthlyUsageBar.style.display = 'none';
+                    }
                 }
                 if (el.setEnterToSend) {
                     el.setEnterToSend.checked = state.enterToSend;
@@ -1077,21 +1249,62 @@
             }
 
             case 'monthlyUsage': {
+                // Always show the bar when data arrives
+                el.monthlyUsageBar.style.display = 'flex';
                 if (msg.error) {
-                    el.monthlyUsageDisplay.textContent = 'Error: ' + msg.error;
+                    el.monthlyUsageDisplay.textContent = '⚠ ' + msg.error;
                 } else {
-                    const d = msg.data || {};
-                    const used  = d.response     || d.tokens_used || d.tokensUsed || d.used || d.count || '?';
-                    const limit = d.token_limit   || d.tokenLimit  || d.limit || null;
-                    el.monthlyUsageDisplay.textContent = limit
-                        ? `${Number(used).toLocaleString()} / ${Number(limit).toLocaleString()} tokens this month`
-                        : `${Number(used).toLocaleString()} tokens used this month`;
+                    _updateMonthlyUsageDisplay(msg.data);
                 }
                 break;
             }
 
+            // ── Tool approval flow ─────────────────────────────────────────────
+
+            case 'toolApprovalRequest': {
+                const card = createApprovalCard(msg);
+                const domEl = el.messages.querySelector(`[data-id="${CSS.escape(msg.msgId)}"]`);
+                if (domEl) {
+                    // Insert before the msg-footer so it appears above timestamp
+                    const footer = domEl.querySelector('.msg-footer');
+                    footer ? domEl.insertBefore(card, footer) : domEl.appendChild(card);
+                } else {
+                    // Fallback: message bubble not found, append directly to messages
+                    el.messages.appendChild(card);
+                }
+                scrollBottom();
+                break;
+            }
+
+            case 'toolDenied': {
+                // If the user already clicked Deny on the card, the card is already styled denied.
+                // This handles the case where the denial came from a config-level 'deny' (no card shown)
+                // or from a Stop action clearing approvals.
+                const card = el.messages.querySelector(
+                    `.tool-approval-card[data-callid="${CSS.escape(msg.call.id)}"]`
+                );
+                if (card && !card.classList.contains('tap-denied')) {
+                    card.classList.add('tap-denied');
+                    card.querySelector('.tool-approval-actions')?.remove();
+                    const statusEl = card.querySelector('.tool-approval-status');
+                    if (statusEl) statusEl.textContent = '✕ Denied';
+                    const iconEl = card.querySelector('.tap-icon');
+                    if (iconEl) {
+                        iconEl.textContent = '✕';
+                        iconEl.style.color = 'var(--vscode-errorForeground, #f66)';
+                    }
+                }
+                break;
+            }
+
+            case 'clearApprovals': {
+                el.messages.querySelectorAll('.tool-approval-card').forEach(c => c.remove());
+                break;
+            }
+
+            // ── Tool execution events ──────────────────────────────────────────
+
             case 'toolStart': {
-                // Find or create the current assistant message
                 let aMsg = state.messages.find(m => m.id === msg.msgId);
                 if (!aMsg) break;
 
@@ -1101,14 +1314,20 @@
                 const domEl = el.messages.querySelector(`[data-id="${CSS.escape(msg.msgId)}"]`);
                 if (domEl) {
                     const block = createToolBlock(call);
-                    domEl.appendChild(block);
+                    // Replace pending approval card if present, otherwise append
+                    const pendingCard = domEl.querySelector(`.tool-approval-card[data-callid="${CSS.escape(msg.call.id)}"]`);
+                    if (pendingCard) {
+                        pendingCard.replaceWith(block);
+                    } else {
+                        const footer = domEl.querySelector('.msg-footer');
+                        footer ? domEl.insertBefore(block, footer) : domEl.appendChild(block);
+                    }
                     scrollBottom();
                 }
                 break;
             }
 
             case 'toolEnd': {
-                // Update tool call with result
                 for (const m of state.messages) {
                     const tc = m.toolCalls?.find(t => t.id === msg.call.id);
                     if (tc) {
@@ -1149,7 +1368,6 @@
             }
 
             case 'error': {
-                // Remove any blank pending assistant bubble so the error stands alone
                 const pendingIdx = state.messages.findIndex(m => m.pending);
                 if (pendingIdx !== -1) {
                     state.messages.splice(pendingIdx, 1);
@@ -1198,8 +1416,6 @@
     // ── Helper: load messages array from session ─────────────────────────────
 
     function _loadMessages(apiMessages) {
-        // apiMessages are { role, content, tool_calls? } — the OpenAI format
-        // We need to convert to display format
         for (const m of apiMessages) {
             if (m.role === 'user') {
                 const dm = { id: `u_${Math.random().toString(36).slice(2)}`, role: 'user', raw: m.content || '', contextFiles: [] };
@@ -1223,7 +1439,6 @@
                 state.messages.push(dm);
                 el.messages.appendChild(createAssistantEl(dm));
             }
-            // Skip tool-role messages (they're internal API messages, not display messages)
         }
         scrollBottom();
     }

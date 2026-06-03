@@ -185,8 +185,22 @@ module.exports = {
         logger.verbose('RESPONSE', data);
 
         let text  = data.message || data.response || data.text || data.content || data.answer || '';
-        const usage = data.usage || null;
         const uuid  = data.uuid  || null;
+
+        // Merge usage object with any top-level cost/token fields the API may return
+        const topLevel = {};
+        const costKeys = [
+            'prompt_tokens','completion_tokens','total_tokens','input_tokens','output_tokens',
+            'input_cost','output_cost','total_cost','cost','token_cost',
+            'cost_input','cost_output','token_input_cost','token_output_cost',
+            'prompt_cost','completion_cost'
+        ];
+        for (const k of costKeys) {
+            if (data[k] != null) topLevel[k] = data[k];
+        }
+        const usage = (data.usage || Object.keys(topLevel).length > 0)
+            ? Object.assign({}, data.usage || {}, topLevel)
+            : null;
 
         // Resolve tool calls: native response field (api mode) or parsed from text (prompt mode)
         let toolCalls = null;

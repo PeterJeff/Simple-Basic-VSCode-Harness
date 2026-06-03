@@ -636,11 +636,23 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 /* ── Token usage badge ──────────────────────────────────────────────────────── */
 .usage-badge {
     font-size: 10px;
-    color: var(--vscode-descriptionForeground);
-    opacity: 0.55;
     margin-top: 3px;
     padding: 0 2px;
     letter-spacing: 0.02em;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.usage-line {
+    display: block;
+}
+.usage-tokens {
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.55;
+}
+.usage-cost {
+    color: var(--vscode-charts-green, #4ec9b0);
+    opacity: 0.75;
 }
 
 /* ── Monthly usage bar ──────────────────────────────────────────────────────── */
@@ -656,6 +668,139 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     flex-shrink: 0;
 }
 #monthly-usage-display { flex: 1; }
+
+/* ── Tool approval cards ────────────────────────────────────────────────────── */
+.tool-approval-card {
+    margin-top: 6px;
+    border: 1px solid var(--vscode-focusBorder, #007acc);
+    border-radius: 3px;
+    font-size: 11px;
+    overflow: hidden;
+    background: rgba(0, 122, 204, 0.05);
+}
+
+.tool-approval-card.tap-denied {
+    border-color: var(--vscode-widget-border, #555);
+    background: transparent;
+    opacity: 0.55;
+}
+
+.tool-approval-header {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    background: rgba(0, 122, 204, 0.08);
+}
+
+.tool-approval-card.tap-denied .tool-approval-header {
+    background: var(--vscode-titleBar-activeBackground, rgba(100,100,100,0.1));
+}
+
+.tap-icon {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--vscode-focusBorder, #007acc);
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+}
+
+.tap-name {
+    font-weight: 600;
+    font-family: var(--vscode-editor-font-family, monospace);
+    flex-shrink: 0;
+}
+
+.tap-summary {
+    flex: 1;
+    color: var(--vscode-descriptionForeground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 10px;
+    min-width: 0;
+}
+
+.tool-approval-status {
+    font-size: 10px;
+    opacity: 0.6;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+.tap-expand-btn, .tap-rawbtn {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    line-height: 1.4;
+}
+
+.tap-expand-btn:hover, .tap-rawbtn:hover {
+    background: var(--vscode-toolbar-hoverBackground);
+    color: var(--vscode-foreground);
+}
+
+.tool-approval-body {
+    padding: 6px 8px;
+    background: var(--vscode-textBlockQuote-background, rgba(0,0,0,0.1));
+    border-top: 1px solid var(--vscode-widget-border, #444);
+}
+
+.tap-pre {
+    margin: 0;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 180px;
+    overflow-y: auto;
+    color: var(--vscode-foreground);
+}
+
+.tool-approval-actions {
+    display: flex;
+    gap: 5px;
+    padding: 5px 8px;
+    border-top: 1px solid rgba(0, 122, 204, 0.2);
+    background: rgba(0, 122, 204, 0.04);
+}
+
+.tap-allow-once, .tap-allow-always, .tap-deny {
+    padding: 2px 9px;
+    font-size: 11px;
+    border-radius: 2px;
+    cursor: pointer;
+    border: 1px solid var(--vscode-widget-border, #555);
+}
+
+.tap-allow-once {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border-color: var(--vscode-button-background);
+}
+.tap-allow-once:hover { background: var(--vscode-button-hoverBackground); }
+
+.tap-allow-always {
+    background: transparent;
+    color: var(--vscode-foreground);
+}
+.tap-allow-always:hover { background: var(--vscode-toolbar-hoverBackground); }
+
+.tap-deny {
+    background: transparent;
+    color: var(--vscode-errorForeground, #f66);
+    border-color: var(--vscode-errorForeground, #f66);
+    opacity: 0.7;
+}
+.tap-deny:hover { opacity: 1; background: rgba(204,0,0,0.08); }
 
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

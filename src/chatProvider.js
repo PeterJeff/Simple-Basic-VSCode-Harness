@@ -17,8 +17,24 @@ class ChatViewProvider {
         this._session = this._history.createSession();
         this._mode = 'chat';
         this._streamMsgId = '';
-        this._sessionState = null; // ephemeral adapter state (e.g. session ID for gemini-jank)
+        this._sessionState = null;
+        this._pendingApprovals = new Map(); // callId → { resolve }
         certLoader.configure({ enabled: api.getConfig().get('winCertStore', true) });
+
+        // Register in-chat approval callback with toolHandler
+        toolHandler.setApprovalCallback(async (toolName, callId, args, msgId, rawCall) => {
+            return new Promise((resolve) => {
+                this._pendingApprovals.set(callId, { resolve });
+                this.sendToWebview({
+                    type: 'toolApprovalRequest',
+                    callId,
+                    toolName,
+                    args,
+                    rawCall,
+                    msgId
+                });
+            });
+        });
     }
 
     // ── VSCode webview lifecycle ───────────────────────────────────────────────
@@ -46,6 +62,7 @@ class ChatViewProvider {
 
     newChat() {
         if (agentRunner.isRunning()) agentRunner.stop();
+        this._clearPendingApprovals();
         if (this._session.messages.length > 0) {
             this._history.saveSession(this._session);
         }
@@ -65,6 +82,7 @@ class ChatViewProvider {
     onConfigChange() {
         const cfg = api.getConfig();
         certLoader.configure({ enabled: cfg.get('winCertStore', true) });
+        const supportsMonthlyUsage = this._supportsMonthlyUsage();
         this.sendToWebview({
             type: 'configUpdate',
             servers: api.getServers(),
@@ -76,10 +94,14 @@ class ChatViewProvider {
             verboseLogging: cfg.get('verboseLogging', false),
             maxIterations: cfg.get('maxIterations', 20),
             toolPermissions: cfg.get('toolPermissions', {}),
-            askSageToolMode: cfg.get('askSageToolMode', 'api')
+            askSageToolMode: cfg.get('askSageToolMode', 'api'),
+            supportsMonthlyUsage
         });
-        // Switching endpoints resets adapter session state
         this._sessionState = null;
+        // Auto-fetch on endpoint change so the banner refreshes immediately
+        if (supportsMonthlyUsage) {
+            this._fetchMonthlyUsage().catch(() => {});
+        }
     }
 
     sendToWebview(msg) {
@@ -107,6 +129,7 @@ class ChatViewProvider {
 
             case 'stop':
                 agentRunner.stop();
+                this._clearPendingApprovals();
                 break;
 
             case 'newChat':
@@ -167,6 +190,28 @@ class ChatViewProvider {
                 await this._fetchMonthlyUsage();
                 break;
 
+            case 'toolApprovalResponse': {
+                const pending = this._pendingApprovals.get(msg.callId);
+                if (pending) {
+                    this._pendingApprovals.delete(msg.callId);
+                    pending.resolve(msg.decision);
+                }
+                break;
+            }
+
+            case 'openTextWindow': {
+                try {
+                    const doc = await vscode.workspace.openTextDocument({
+                        content: msg.content || '',
+                        language: 'json'
+                    });
+                    await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+                } catch (e) {
+                    logger.error('openTextWindow', e);
+                }
+                break;
+            }
+
             case 'openSettings':
                 vscode.commands.executeCommand(
                     'workbench.action.openSettings',
@@ -180,6 +225,7 @@ class ChatViewProvider {
 
     async _sendInitState() {
         const cfg = api.getConfig();
+        const supportsMonthlyUsage = this._supportsMonthlyUsage();
         this.sendToWebview({
             type: 'init',
             sessions: this._history.getSessions(),
@@ -195,11 +241,16 @@ class ChatViewProvider {
             maxIterations: cfg.get('maxIterations', 20),
             toolPermissions: cfg.get('toolPermissions', {}),
             toolDefs: toolHandler.ALL_TOOLS.map(t => t.function.name),
-            askSageToolMode: cfg.get('askSageToolMode', 'api')
+            askSageToolMode: cfg.get('askSageToolMode', 'api'),
+            supportsMonthlyUsage
         });
 
-        // Auto-fetch models in background
         this._fetchModels().catch(() => {});
+
+        // Auto-fetch monthly usage for endpoints that support it
+        if (supportsMonthlyUsage) {
+            this._fetchMonthlyUsage().catch(() => {});
+        }
     }
 
     async _fetchModels() {
@@ -213,7 +264,6 @@ class ChatViewProvider {
     async _handleUserMessage(rawText) {
         if (!rawText.trim()) return;
 
-        // Resolve @file references
         const { displayText, contextBlocks } = await this._resolveAtRefs(rawText);
 
         let apiContent = displayText;
@@ -249,12 +299,12 @@ class ChatViewProvider {
 
     async _handleFork(userMsgIdx) {
         if (agentRunner.isRunning()) agentRunner.stop();
+        this._clearPendingApprovals();
 
         if (this._session.messages.length > 0) {
             this._history.saveSession(this._session);
         }
 
-        // Find the userMsgIdx-th user message and slice before it
         let userCount = 0;
         let sliceAt = -1;
         for (let i = 0; i < this._session.messages.length; i++) {
@@ -296,6 +346,9 @@ class ChatViewProvider {
             onToolStart: (call) => {
                 this.sendToWebview({ type: 'toolStart', msgId: call.msgId, call });
             },
+            onToolDenied: (call) => {
+                this.sendToWebview({ type: 'toolDenied', msgId: call.msgId, call });
+            },
             onToolEnd: (call) => {
                 this.sendToWebview({ type: 'toolEnd', msgId: call.msgId, call });
             },
@@ -308,6 +361,8 @@ class ChatViewProvider {
                 this._history.saveSession(this._session);
                 this.sendToWebview({ type: 'sessions', sessions: this._history.getSessions() });
                 this.sendToWebview({ type: 'done' });
+                // Auto-refresh monthly usage after each agent run
+                this._autoFetchMonthlyUsage();
             },
             onError: (errMsg) => {
                 this.sendToWebview({ type: 'error', text: errMsg });
@@ -356,15 +411,23 @@ class ChatViewProvider {
         if (!session) return;
 
         if (agentRunner.isRunning()) agentRunner.stop();
+        this._clearPendingApprovals();
         if (this._session.messages.length > 0 && this._session.id !== id) {
             this._history.saveSession(this._session);
         }
         this._session = session;
-        this._sessionState = null; // session state is ephemeral — don't carry over to loaded session
+        this._sessionState = null;
         this.sendToWebview({ type: 'loadSession', session });
     }
 
-    // ── Ask Sage usage ─────────────────────────────────────────────────────────
+    // ── Monthly usage ──────────────────────────────────────────────────────────
+
+    _supportsMonthlyUsage() {
+        try {
+            const { adapter } = api.resolveActive();
+            return typeof adapter.getMonthlyUsage === 'function';
+        } catch { return false; }
+    }
 
     async _fetchMonthlyUsage() {
         let resolved;
@@ -384,6 +447,22 @@ class ChatViewProvider {
             logger.error('getMonthlyUsage', e);
             this.sendToWebview({ type: 'monthlyUsage', error: e.message });
         }
+    }
+
+    _autoFetchMonthlyUsage() {
+        if (this._supportsMonthlyUsage()) {
+            this._fetchMonthlyUsage().catch(() => {});
+        }
+    }
+
+    // ── Pending approval cleanup ───────────────────────────────────────────────
+
+    _clearPendingApprovals() {
+        for (const [, { resolve }] of this._pendingApprovals) {
+            resolve('deny');
+        }
+        this._pendingApprovals.clear();
+        this.sendToWebview({ type: 'clearApprovals' });
     }
 
     // ── Settings updates ───────────────────────────────────────────────────────

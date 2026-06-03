@@ -17,7 +17,8 @@ Rules:
     agent: `You are an autonomous coding agent operating inside VS Code with full tool access.
 You can read files, write files, search the codebase, get diagnostics, and run terminal commands.
 Guidelines:
-- Think step by step. Use one tool per turn. Wait for results before continuing.
+- Think step by step. You may call multiple tools in a single response when they are independent (e.g., reading several files at once) — this runs them in parallel and is more efficient.
+- Wait for tool results before continuing with dependent operations.
 - Prefer reading existing code before writing new code.
 - When writing files, write the complete file content — do not use placeholders.
 - When you have completed the task, provide a clear summary of everything you did.
@@ -48,18 +49,23 @@ class AgentRunner {
      * @param {object} initialSessionState  Opaque adapter state from previous run (null to start fresh)
      *
      * Callbacks:
-     *   onMessageStart(id)              — new assistant message about to stream
-     *   onToken(text)                   — streaming text token
-     *   onStreamEnd()                   — streaming response complete
-     *   onToolStart(call)               — { id, name, args }
-     *   onToolEnd(call)                 — { id, name, args, result }
-     *   onComplete({ messages, sessionState }) — final messages array + updated adapter state
-     *   onError(message)                — fatal error string
-     *   onStatus(text)                  — status line update
-     *   onUsage({ usage, uuid, msgId }) — token usage for the last API response (optional)
+     *   onMessageStart(id)
+     *   onToken(text)
+     *   onStreamEnd()
+     *   onToolStart(call)        — { msgId, id, name, args } — tool approved and running
+     *   onToolDenied(call)       — { msgId, id, name, args } — tool was denied
+     *   onToolEnd(call)          — { msgId, id, name, args, result }
+     *   onComplete({ messages, sessionState })
+     *   onError(message)
+     *   onStatus(text)
+     *   onUsage({ usage, uuid, msgId })
      */
     async run(mode, sessionMessages, initialSessionState, callbacks) {
-        const { onMessageStart, onToken, onStreamEnd, onToolStart, onToolEnd, onComplete, onError, onStatus, onUsage } = callbacks;
+        const {
+            onMessageStart, onToken, onStreamEnd,
+            onToolStart, onToolDenied, onToolEnd,
+            onComplete, onError, onStatus, onUsage
+        } = callbacks;
 
         this._abort = new AbortController();
         const signal = this._abort.signal;
@@ -107,31 +113,70 @@ class AgentRunner {
                     break;
                 }
 
-                // Process each tool call
-                for (const tc of assistantMsg.tool_calls) {
-                    if (signal.aborted) break;
+                // ── Phase 1: request approvals for all tool calls simultaneously ────────
+                // Pre-approved tools return instantly; 'ask' tools show in-chat cards.
+                const toolCount = assistantMsg.tool_calls.length;
+                if (toolCount > 1) {
+                    onStatus(`Requesting approval for ${toolCount} tool calls…`);
+                } else {
+                    onStatus(`Requesting approval: ${assistantMsg.tool_calls[0].function.name}…`);
+                }
 
-                    const name = tc.function.name;
-                    let args = {};
-                    try { args = JSON.parse(tc.function.arguments || '{}'); } catch { args = {}; }
+                const decisions = await Promise.all(
+                    assistantMsg.tool_calls.map(async (tc) => {
+                        const name = tc.function.name;
+                        let args = {};
+                        try { args = JSON.parse(tc.function.arguments || '{}'); } catch { args = {}; }
 
-                    onToolStart({ msgId, id: tc.id, name, args });
-                    onStatus(`Running tool: ${name}…`);
+                        if (signal.aborted) {
+                            return { tc, name, args, approved: false };
+                        }
 
-                    const toolResult = await toolHandler.execute(name, args);
+                        const decision = await toolHandler.requestApproval(name, tc.id, args, msgId, tc);
+                        return { tc, name, args, approved: decision === 'allow' };
+                    })
+                );
 
-                    onToolEnd({ msgId, id: tc.id, name, args, result: toolResult });
-                    logger.log(`TOOL RESULT ${name}: ${JSON.stringify(toolResult).slice(0, 120)}`);
+                // ── Phase 2: execute approved tools in parallel ───────────────────────
+                const approvedNames = decisions.filter(d => d.approved).map(d => d.name);
+                if (approvedNames.length > 1) {
+                    onStatus(`Running ${approvedNames.length} tools in parallel: ${approvedNames.join(', ')}…`);
+                } else if (approvedNames.length === 1) {
+                    onStatus(`Running tool: ${approvedNames[0]}…`);
+                }
 
+                const results = await Promise.all(
+                    decisions.map(async ({ tc, name, args, approved }) => {
+                        if (!approved) {
+                            if (onToolDenied) onToolDenied({ msgId, id: tc.id, name, args });
+                            return { tc, name, toolResult: { error: `Tool '${name}' was denied.` } };
+                        }
+
+                        if (signal.aborted) {
+                            return { tc, name, toolResult: { error: 'Aborted' } };
+                        }
+
+                        onToolStart({ msgId, id: tc.id, name, args });
+
+                        const toolResult = await toolHandler.executeDirect(name, args);
+                        logger.log(`TOOL RESULT ${name}: ${JSON.stringify(toolResult).slice(0, 120)}`);
+
+                        onToolEnd({ msgId, id: tc.id, name, args, result: toolResult });
+                        return { tc, name, toolResult };
+                    })
+                );
+
+                // Add all tool results to message history (preserves original order)
+                for (const { tc, name, toolResult } of results) {
                     runMessages.push({
                         role: 'tool',
                         tool_call_id: tc.id,
-                        name: name,
+                        name,
                         content: JSON.stringify(toolResult)
                     });
                 }
 
-                // Plan mode: read-only single pass — present plan then stop
+                // Plan mode: single pass only
                 if (mode === 'plan') break;
             }
 

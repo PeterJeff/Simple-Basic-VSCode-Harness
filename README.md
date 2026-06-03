@@ -65,7 +65,7 @@ Drop [`marked.min.js`](https://github.com/markedjs/marked/releases) into the `me
 | Icon | Action |
 |------|--------|
 | ⟳ | Refresh model list from API |
-| ⬡ | Show monthly token usage (Ask Sage endpoints only) |
+| ⬡ | Manually trigger a monthly token usage refresh |
 | ☰ | Open chat history panel |
 | ⚙ | Open inline settings panel |
 
@@ -80,6 +80,7 @@ Drop [`marked.min.js`](https://github.com/markedjs/marked/releases) into the `me
 |--------|--------|
 | MD | Toggle markdown rendering. Re-renders entire conversation. |
 | Stream | Toggle streaming SSE responses. |
+| TC:API / TC:TXT | Tool call mode — API-native function calling vs. text-injection prompt (Ask Sage native adapter only). |
 
 **Per-message actions:**
 | Action | How |
@@ -117,11 +118,24 @@ Full autonomous loop. The agent can call all tools and will keep iterating (up t
 Tool output is not currently captured from the terminal — it only sends the command.
 
 **Permission levels:**
-- `allow` — runs silently
-- `ask` — shows a confirmation dialog with "Allow Once / Allow Always / Deny"
+- `allow` — runs silently with no prompt
+- `ask` — shows an **inline approval card** in the chat (see below)
 - `deny` — always blocked, returns an error to the model
 
 Change permissions in the Settings panel (⚙) or in VS Code settings under `standaloneAgent.toolPermissions`.
+
+### Tool Approval Cards
+
+When a tool has `ask` permission, an approval card is rendered inline in the chat — no pop-up dialog. Each card shows:
+
+- The tool name and a one-line summary (e.g. the file path, search pattern, or command)
+- **▸ expand** — shows the full parsed arguments as formatted JSON
+- **⧉ raw** — opens the exact JSON the model submitted in a VS Code editor panel beside the chat
+- **Allow Once** — approve this single call
+- **Allow Always** — approve and update the tool's permission to `allow` permanently
+- **Deny** — reject the call; the model receives an error result and may try another approach
+
+If the agent issues multiple tool calls in a single response (e.g. reading several files at once), each call gets its own approval card simultaneously. All cards can be acted on independently — approved calls execute in parallel as soon as their card is resolved.
 
 ---
 
@@ -264,7 +278,13 @@ Auth: set `apiKey` on the server to the `x-access-tokens` value obtained from `/
 | `system_prompt` | string | System prompt override. Takes precedence over the global `systemPrompt` setting. |
 | `reasoningEffort` | `"low"` \| `"medium"` \| `"high"` | Reasoning effort for o1/o3 models. |
 
-**Token usage:** After each response, a dim token count badge appears beneath the assistant message. Click **⬡** in the toolbar to fetch your monthly token usage from `/server/count-monthly-tokens`.
+**Token usage:** After each response, a dim usage badge appears beneath the assistant message showing token counts (total, ↑ input, ↓ output) and cost figures when the API returns them (e.g. `tc:1,234  in $0.000120  out $0.000480  = $0.000600`).
+
+**Monthly usage bar:** For Ask Sage endpoints the monthly usage bar appears automatically when the extension loads and refreshes after every completed agent run. Click **⬡** to force a manual refresh. The bar also updates whenever you switch to an Ask Sage endpoint. Dismiss it with **✕**; it reappears on the next response.
+
+**Tool call mode (TC:API / TC:TXT):** Controls how tool/function calls are sent:
+- **TC:API** — sends tools as native `tools` + `tool_calls` fields in the API request. Requires the model to support function calling.
+- **TC:TXT** — injects a tool schema into the system prompt and parses JSON tool calls from the response text. Use this if the model does not support native function calling.
 
 ---
 
@@ -302,7 +322,9 @@ Verbose logging (toggle via command palette: "Standalone Agent: Toggle Verbose L
 
 - **Terminal output is not captured.** `run_terminal` sends a command to the VS Code integrated terminal but cannot read stdout/stderr. The agent is informed of this. Use `read_file` on any output files instead.
 - **No bundled syntax highlighting.** Code blocks in markdown responses are displayed without language-specific syntax colors unless you add a highlighting library to `media/`.
-- **Tool call format requires function calling support.** The model must support OpenAI-compatible `tools` / `tool_calls` in the response. Models that only support plain text will not be able to use tools (they will still work in Chat mode).
-- **Streaming partial JSON.** Some APIs send tool call arguments split across multiple stream chunks. The client reassembles these, but a very unusual chunk boundary could cause a parse failure. Disable streaming as a workaround.
-- **No subagent / parallel processing** (planned — see ARCHITECTURE.md).
+- **Tool call format requires function calling support.** The model must support OpenAI-compatible `tools` / `tool_calls`. Use **TC:TXT** mode (prompt injection) as a fallback for models that only output plain text.
+- **Streaming partial JSON.** Some APIs send tool call arguments split across multiple stream chunks. The client reassembles these, but an unusual chunk boundary could cause a parse failure. Disable streaming as a workaround.
+- **Multiple parallel tool calls.** When the agent emits several tool calls in one response, approval cards and execution all run in parallel. The agent system prompt encourages this pattern for efficiency.
+- **Ask Sage `usage` field names are not in the public spec.** Token/cost sub-fields inside the `usage` object are discovered empirically. Enable verbose logging and inspect the RESPONSE log after your first query to confirm the field names your deployment returns.
+- **No subagent / parallel processing** (planned).
 - **No vector search / embeddings** (planned).
