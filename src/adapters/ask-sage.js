@@ -24,7 +24,7 @@
  */
 
 const logger = require('../logger');
-const { nodeRequest, collectBody } = require('./transport');
+const { nodeRequest, collectBody, readStream } = require('./transport');
 
 function askSageHeaders(server) {
     const h = { 'Content-Type': 'application/json' };
@@ -140,10 +140,11 @@ module.exports = {
         }
     },
 
-    async chat(server, endpoint, { messages, tools, onToken, signal, model, toolCallMode }) {
+    async chat(server, endpoint, { messages, tools, onToken, signal, model, streaming, toolCallMode }) {
         const url  = buildUrl(server, endpoint, 'query', '/server/query');
         const opts = endpoint.adapterOptions || {};
         const mode = toolCallMode || 'api';
+        const useStreaming = streaming && typeof onToken === 'function';
 
         const { messagePayload, systemPrompt: systemFromMessages } = buildAskSageMessage(messages);
         let finalSystemPrompt = opts.system_prompt || systemFromMessages || null;
@@ -153,10 +154,9 @@ module.exports = {
             finalSystemPrompt = ((finalSystemPrompt || '') + '\n\n' + buildToolsPrompt(tools)).trim();
         }
 
-        const body = { message: messagePayload, model, temperature: 0.1, usage: true };
+        const body = { message: messagePayload, model, temperature: 0.1, usage: true, streaming: useStreaming };
 
         if (finalSystemPrompt)            body.system_prompt    = finalSystemPrompt;
-        // In api mode, send tool definitions natively
         if (mode === 'api' && tools?.length) {
             body.tools       = tools;
             body.tool_choice = 'auto';
@@ -181,40 +181,58 @@ module.exports = {
             throw new Error(`API ${res.statusCode}: ${JSON.stringify(err).slice(0, 300)}`);
         }
 
-        const data = await collectBody(res);
-        logger.verbose('RESPONSE', data);
+        let reply, usage = null, uuid = null;
 
-        let text  = data.message || data.response || data.text || data.content || data.answer || '';
-        const uuid  = data.uuid  || null;
+        if (useStreaming) {
+            const { message, extraFields, usage: streamUsage } = await readStream(res, onToken);
+            uuid  = extraFields.uuid || null;
+            usage = streamUsage || null;
 
-        // Merge usage object with any top-level cost/token fields the API may return
-        const topLevel = {};
-        const costKeys = [
-            'prompt_tokens','completion_tokens','total_tokens','input_tokens','output_tokens',
-            'input_cost','output_cost','total_cost','cost','token_cost',
-            'cost_input','cost_output','token_input_cost','token_output_cost',
-            'prompt_cost','completion_cost'
-        ];
-        for (const k of costKeys) {
-            if (data[k] != null) topLevel[k] = data[k];
+            // Prompt mode: parse tool calls from accumulated text content
+            if (mode === 'prompt' && message.content && !message.tool_calls?.length) {
+                const toolCalls = parseTextToolCalls(message.content);
+                if (toolCalls) {
+                    message.content  = null;
+                    message.tool_calls = toolCalls;
+                }
+            }
+
+            reply = message;
+        } else {
+            const data = await collectBody(res);
+            logger.verbose('RESPONSE', data);
+
+            let text = data.message || data.response || data.text || data.content || data.answer || '';
+            uuid = data.uuid || null;
+
+            // Merge usage with any top-level cost/token fields the API may return
+            const topLevel = {};
+            const costKeys = [
+                'prompt_tokens','completion_tokens','total_tokens','input_tokens','output_tokens',
+                'input_cost','output_cost','total_cost','cost','token_cost',
+                'cost_input','cost_output','token_input_cost','token_output_cost',
+                'prompt_cost','completion_cost'
+            ];
+            for (const k of costKeys) {
+                if (data[k] != null) topLevel[k] = data[k];
+            }
+            usage = (data.usage || Object.keys(topLevel).length > 0)
+                ? Object.assign({}, data.usage || {}, topLevel)
+                : null;
+
+            let toolCalls = null;
+            if (mode === 'api' && Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
+                toolCalls = data.tool_calls;
+            } else if (mode === 'prompt') {
+                toolCalls = parseTextToolCalls(text);
+                if (toolCalls) text = null;
+            }
+
+            reply = { role: 'assistant', content: text || null };
+            if (toolCalls) reply.tool_calls = toolCalls;
+
+            if (text && onToken) onToken(text);
         }
-        const usage = (data.usage || Object.keys(topLevel).length > 0)
-            ? Object.assign({}, data.usage || {}, topLevel)
-            : null;
-
-        // Resolve tool calls: native response field (api mode) or parsed from text (prompt mode)
-        let toolCalls = null;
-        if (mode === 'api' && Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
-            toolCalls = data.tool_calls;
-        } else if (mode === 'prompt') {
-            toolCalls = parseTextToolCalls(text);
-            if (toolCalls) text = null; // suppress raw JSON from being shown as chat text
-        }
-
-        const reply = { role: 'assistant', content: text || null };
-        if (toolCalls) reply.tool_calls = toolCalls;
-
-        if (text && onToken) onToken(text);
 
         return { message: reply, sessionState: null, usage, uuid };
     },

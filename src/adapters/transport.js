@@ -54,6 +54,7 @@ function readStream(res, onToken) {
         let content = '';
         const tcMap = {};
         const extraFields = {};
+        let usage = null;
 
         res.setEncoding('utf8');
 
@@ -70,7 +71,9 @@ function readStream(res, onToken) {
                 let parsed;
                 try { parsed = JSON.parse(raw); } catch { continue; }
 
-                // Harvest any non-standard top-level fields (e.g. session_id)
+                if (parsed.usage) usage = parsed.usage;
+
+                // Harvest any non-standard top-level fields (e.g. session_id, uuid)
                 for (const key of Object.keys(parsed)) {
                     if (key !== 'choices' && key !== 'id' && key !== 'object' &&
                         key !== 'model' && key !== 'created' && key !== 'usage') {
@@ -105,7 +108,7 @@ function readStream(res, onToken) {
             const message = { role: 'assistant', content: content || null };
             if (toolCalls.length > 0) message.tool_calls = toolCalls;
             logger.verbose('STREAM_END', { contentLen: content.length, toolCalls: toolCalls.length });
-            resolve({ message, extraFields });
+            resolve({ message, extraFields, usage });
         });
 
         res.on('error', reject);
