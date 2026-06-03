@@ -9,6 +9,9 @@ const HistoryManager = require('./historyManager');
 const logger = require('./logger');
 const certLoader = require('./certLoader');
 
+const MODELS_CACHE_TTL  = 30 * 24 * 60 * 60 * 1000;  // 30 days
+const MONTHLY_CACHE_TTL =  3 * 24 * 60 * 60 * 1000;  // 3 days
+
 class ChatViewProvider {
     constructor(context) {
         this._ctx = context;
@@ -163,7 +166,7 @@ class ChatViewProvider {
                 break;
 
             case 'getModels':
-                await this._fetchModels();
+                await this._fetchModels(true);
                 break;
 
             case 'setModel':
@@ -209,7 +212,7 @@ class ChatViewProvider {
                 break;
 
             case 'getMonthlyUsage':
-                await this._fetchMonthlyUsage();
+                await this._fetchMonthlyUsage(true);
                 break;
 
             case 'toolApprovalResponse': {
@@ -275,9 +278,18 @@ class ChatViewProvider {
         }
     }
 
-    async _fetchModels() {
+    async _fetchModels(force = false) {
+        if (!force) {
+            const cached = this._readCache('sa_models_cache', MODELS_CACHE_TTL);
+            if (cached) {
+                const current = api.getConfig().get('model', '');
+                this.sendToWebview({ type: 'models', models: cached.models, current });
+                return;
+            }
+        }
         const models = await api.listModels();
         const current = api.getConfig().get('model', '');
+        this._writeCache('sa_models_cache', { models });
         this.sendToWebview({ type: 'models', models, current });
     }
 
@@ -451,7 +463,14 @@ class ChatViewProvider {
         } catch { return false; }
     }
 
-    async _fetchMonthlyUsage() {
+    async _fetchMonthlyUsage(force = false) {
+        if (!force) {
+            const cached = this._readCache('sa_monthly_cache', MONTHLY_CACHE_TTL);
+            if (cached) {
+                this.sendToWebview({ type: 'monthlyUsage', data: cached.data });
+                return;
+            }
+        }
         let resolved;
         try { resolved = api.resolveActive(); } catch (e) {
             this.sendToWebview({ type: 'monthlyUsage', error: e.message });
@@ -464,6 +483,7 @@ class ChatViewProvider {
         }
         try {
             const data = await adapter.getMonthlyUsage(server, endpoint);
+            this._writeCache('sa_monthly_cache', { data });
             this.sendToWebview({ type: 'monthlyUsage', data });
         } catch (e) {
             logger.error('getMonthlyUsage', e);
@@ -471,10 +491,37 @@ class ChatViewProvider {
         }
     }
 
+    // Post-run auto-refresh always forces a live fetch so usage reflects the tokens just spent.
     _autoFetchMonthlyUsage() {
         if (this._supportsMonthlyUsage()) {
-            this._fetchMonthlyUsage().catch(() => {});
+            this._fetchMonthlyUsage(true).catch(() => {});
         }
+    }
+
+    // ── Cache helpers ──────────────────────────────────────────────────────────
+
+    _endpointCacheKey() {
+        try {
+            const { server, endpoint } = api.resolveActive();
+            return `${server.url}::${endpoint.adapter}::${endpoint.name}`;
+        } catch { return null; }
+    }
+
+    _readCache(storeKey, ttl) {
+        const key = this._endpointCacheKey();
+        if (!key) return null;
+        const store = this._ctx.globalState.get(storeKey, {});
+        const entry = store[key];
+        if (!entry || Date.now() - entry.ts > ttl) return null;
+        return entry;
+    }
+
+    _writeCache(storeKey, payload) {
+        const key = this._endpointCacheKey();
+        if (!key) return;
+        const store = this._ctx.globalState.get(storeKey, {});
+        store[key] = { ...payload, ts: Date.now() };
+        this._ctx.globalState.update(storeKey, store);
     }
 
     // ── Pending approval cleanup ───────────────────────────────────────────────
