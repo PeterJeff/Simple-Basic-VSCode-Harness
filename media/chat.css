@@ -152,9 +152,12 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .tool-header:hover { background: var(--vscode-toolbar-hoverBackground); }
 
 .tool-name  { font-weight: 600; font-family: var(--vscode-editor-font-family, monospace); }
+.tool-summary { font-size: 10px; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
 .tool-state { font-size: 10px; opacity: 0.7; margin-left: auto; }
+.tool-toggle-icon { font-size: 10px; opacity: 0.5; flex-shrink: 0; transition: transform 0.1s; }
+.tool-block.open .tool-toggle-icon { transform: rotate(90deg); }
 
-.tool-diff-btn {
+.tool-view-btn, .tool-diff-btn {
     flex-shrink: 0;
     background: transparent;
     border: 1px solid var(--vscode-widget-border, #555);
@@ -162,10 +165,9 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     color: var(--vscode-descriptionForeground);
     cursor: pointer;
     font-size: 10px;
-    margin-left: 4px;
     padding: 1px 5px;
 }
-.tool-diff-btn:hover {
+.tool-view-btn:hover, .tool-diff-btn:hover {
     background: var(--vscode-toolbar-hoverBackground);
     color: var(--vscode-foreground);
 }

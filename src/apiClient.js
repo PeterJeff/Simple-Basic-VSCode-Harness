@@ -9,10 +9,26 @@ function setSecrets(secrets) {
 }
 
 async function _withKey(server) {
-    if (!_secrets) return server;
-    const stored = await _secrets.get(`secret_key_${server.name}`);
-    if (!stored) return server;
-    return { ...server, apiKey: stored };
+    // 1. Try secure store first
+    if (_secrets) {
+        try {
+            const stored = await _secrets.get(`secret_key_${server.name}`);
+            if (stored) return { ...server, apiKey: stored };
+        } catch (e) {
+            // Secrets store unavailable (e.g. locked keychain) — fall through to config
+            logger.error('secrets.get', e);
+        }
+    }
+
+    // 2. Fall back to plain-text apiKey still in the config object.
+    //    Covers: first run before migration, secrets store failures, user manually
+    //    editing settings.json.  Also lazily migrates the key into secrets so the
+    //    next call uses the secure path.
+    if (server.apiKey && _secrets) {
+        try { await _secrets.store(`secret_key_${server.name}`, server.apiKey); } catch {}
+    }
+
+    return server;
 }
 
 function getConfig() {

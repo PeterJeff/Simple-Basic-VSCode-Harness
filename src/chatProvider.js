@@ -111,6 +111,10 @@ class ChatViewProvider {
         certLoader.configure({ enabled: cfg.get('winCertStore', true) });
         const supportsMonthlyUsage = this._supportsMonthlyUsage();
 
+        // Re-run migration on every config change so any apiKey re-added to settings.json
+        // (e.g. by direct file edit) is immediately swept into secrets and stripped.
+        this._migrateApiKeys().catch(() => {});
+
         this._getServersForWebview().then(servers => {
             this.sendToWebview({
                 type: 'configUpdate',

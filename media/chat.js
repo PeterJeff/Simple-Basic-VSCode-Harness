@@ -444,9 +444,12 @@
 
         block.innerHTML = `
 <div class="tool-header" onclick="this.parentElement.classList.toggle('open')">
+  <span class="tool-toggle-icon">▸</span>
   <span>${stateIcon}</span>
   <span class="tool-name">${esc(tc.name)}</span>
+  <span class="tool-summary">${esc(toolCallSummary(tc.name, tc.args || {}))}</span>
   <span class="tool-state">${stateText}</span>
+  ${tc.done ? `<button class="tool-view-btn" title="Open args &amp; result in editor">⊡</button>` : ''}
   ${isDiffable ? `<button class="tool-diff-btn" title="View git diff">⊕ Diff</button>` : ''}
 </div>
 <div class="tool-body">${tc.done
@@ -454,6 +457,12 @@
     : `<b>args:</b>\n${esc(args)}`
 }</div>`;
 
+        if (tc.done) {
+            block.querySelector('.tool-view-btn')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                _openToolPreview(tc.name, tc.args, tc.result);
+            });
+        }
         if (isDiffable) {
             block.querySelector('.tool-diff-btn')?.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -462,6 +471,11 @@
         }
 
         return block;
+    }
+
+    function _openToolPreview(name, args, result) {
+        const content = JSON.stringify({ tool: name, args: args || {}, result: result || {} }, null, 2);
+        vscode.postMessage({ type: 'openTextWindow', content });
     }
 
     // ── Tool approval card ────────────────────────────────────────────────────
@@ -1382,18 +1396,34 @@ ${keyHint}
 
                 const block = el.messages.querySelector(`.tool-block[data-tcid="${CSS.escape(msg.call.id)}"]`);
                 if (block) {
-                    const stateIcon = msg.call.result?.error ? '✕' : '✓';
-                    const stateText = msg.call.result?.error ? 'error' : 'done';
+                    const hasError = !!msg.call.result?.error;
+                    const stateIcon = hasError ? '✕' : '✓';
+                    const stateText = hasError ? 'error' : 'done';
                     const header = block.querySelector('.tool-header');
                     if (header) {
                         header.querySelector('.tool-spinner')?.replaceWith(document.createTextNode(stateIcon));
                         const st = header.querySelector('.tool-state');
                         if (st) st.textContent = stateText;
 
-                        // Add diff button for successful write/edit operations
+                        // View button — opens args + result in a VS Code editor panel
+                        if (!header.querySelector('.tool-view-btn')) {
+                            const viewBtn = document.createElement('button');
+                            viewBtn.className = 'tool-view-btn';
+                            viewBtn.title = 'Open args & result in editor';
+                            viewBtn.textContent = '⊡';
+                            viewBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                _openToolPreview(msg.call.name, msg.call.args, msg.call.result);
+                            });
+                            // Insert before diff button if present, otherwise before state span
+                            const diffBtn = header.querySelector('.tool-diff-btn');
+                            header.insertBefore(viewBtn, diffBtn || null);
+                        }
+
+                        // Diff button for successful write/edit operations
                         const name = msg.call.name;
                         const argPath = msg.call.args?.path;
-                        if (!msg.call.result?.error &&
+                        if (!hasError &&
                             (name === 'write_file' || name === 'edit_file') &&
                             argPath && !header.querySelector('.tool-diff-btn')) {
                             const diffBtn = document.createElement('button');
