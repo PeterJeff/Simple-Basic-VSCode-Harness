@@ -306,12 +306,6 @@ Ideas for additional tools:
 - `create_file` — alias for `write_file` that errors if file already exists (safety)
 - `delete_file` — `vscode.workspace.fs.delete()`
 
-### Proper Terminal Output Capture
-Currently `run_terminal` just sends text to an interactive terminal. To capture output:
-- Use Node.js `child_process.spawn()` instead
-- Pipe stdout/stderr, collect output, return it as `{ stdout, stderr, exitCode }`
-- Tradeoff: spawned processes don't inherit the user's shell config / environment
-
 ### Settings UI Polish
 - Endpoint add/edit/delete directly from the settings panel (currently requires editing settings.json)
 - Per-session system prompt override
@@ -344,7 +338,8 @@ Currently `run_terminal` just sends text to an interactive terminal. To capture 
 | `vscode.workspace.findFiles` | @ autocomplete and search_files tool |
 | `vscode.workspace.onDidChangeConfiguration` | Config change listener |
 | `vscode.languages.getDiagnostics` | get_diagnostics tool |
-| `vscode.window.terminals`, `createTerminal` | run_terminal tool |
+| `vscode.window.terminals`, `createTerminal` | run_terminal tool (display only) |
+| `child_process.exec` (Node.js built-in) | run_terminal output capture |
 | `ExtensionContext.globalState` | Session history persistence |
 | `ExtensionContext.extensionUri` | Resolving asset paths for webview |
 | `vscode.Uri.joinPath`, `webview.asWebviewUri` | Converting local file paths to webview-accessible URIs |

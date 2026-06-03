@@ -115,13 +115,11 @@ Full autonomous loop. The agent can call all tools and will keep iterating (up t
 | `write_file` | Write or overwrite a file | ask |
 | `run_terminal` | Run a command and capture its output | ask |
 
-**`run_terminal` output capture:** The tool captures everything written to the terminal for `timeout_ms` milliseconds (default 10 seconds) using VSCode's `onDidWriteTerminalData` API, then returns the stripped output to the model. Increase `timeout_ms` for slow commands:
+**`run_terminal` output capture:** The tool runs the command via Node's `child_process.exec` in the workspace root, capturing stdout and stderr directly. The integrated terminal also shows the command for visibility. Increase `timeout_ms` for slow commands:
 
 ```
 run_terminal({ command: "npm install", timeout_ms: 30000 })
 ```
-
-Output includes the shell prompt and echoed command — the model ignores those and reads the actual result. ANSI escape sequences (colors, cursor codes) are stripped automatically.
 
 **Permission levels:**
 - `allow` — runs silently with no prompt
@@ -328,7 +326,6 @@ Verbose logging (toggle via command palette: "Standalone Agent: Toggle Verbose L
 
 ## Limitations / Known Issues
 
-- **Terminal output capture is time-boxed.** `run_terminal` waits `timeout_ms` ms (default 10 s) for output. Commands that produce output after the window closes will be missed. The output includes the echoed command and shell prompt, which the model is instructed to ignore.
 - **No bundled syntax highlighting.** Code blocks in markdown responses are displayed without language-specific syntax colors unless you add a highlighting library to `media/`.
 - **Tool call format requires function calling support.** The model must support OpenAI-compatible `tools` / `tool_calls`. Use **TC:TXT** mode (prompt injection) as a fallback for models that only output plain text.
 - **Streaming partial JSON.** Some APIs send tool call arguments split across multiple stream chunks. The client reassembles these, but an unusual chunk boundary could cause a parse failure. Disable streaming as a workaround.

@@ -1,5 +1,6 @@
 {
   "name": "standalone-agent",
+  "publisher": "local",
   "displayName": "Standalone Agent",
   "description": "Autonomous agentic coding assistant — air-gapped, zero external dependencies",
   "version": "0.3.0",

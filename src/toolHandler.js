@@ -267,41 +267,29 @@ async function _run(toolName, args) {
         }
 
         case 'run_terminal': {
-            let terminal = vscode.window.terminals.find(t => t.name === 'Standalone Agent');
-            const isNew = !terminal || terminal.exitStatus !== undefined;
-            if (isNew) {
-                terminal = vscode.window.createTerminal('Standalone Agent');
-                // Brief pause for the new terminal's shell to initialize before we start listening
-                await new Promise(r => setTimeout(r, 400));
-            }
-            terminal.show(true);
-
             const timeoutMs = typeof args.timeout_ms === 'number' && args.timeout_ms > 0
                 ? Math.min(args.timeout_ms, 120000)
                 : 10000;
 
-            const chunks = [];
-            const listener = vscode.window.onDidWriteTerminalData(e => {
-                if (e.terminal === terminal) chunks.push(e.data);
+            const cp = require('child_process');
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+
+            const output = await new Promise((resolve) => {
+                cp.exec(args.command, { cwd: root, timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 }, (err, stdout, stderr) => {
+                    const combined = [stdout, stderr].filter(Boolean).join('\n').trim();
+                    resolve(combined || (err ? `exit ${err.code}` : '(no output)'));
+                });
             });
 
+            // Also show the command in the integrated terminal so the user can see it ran
+            let terminal = vscode.window.terminals.find(t => t.name === 'Standalone Agent');
+            if (!terminal || terminal.exitStatus !== undefined) {
+                terminal = vscode.window.createTerminal('Standalone Agent');
+            }
+            terminal.show(true);
             terminal.sendText(args.command);
-            await new Promise(r => setTimeout(r, timeoutMs));
-            listener.dispose();
 
-            // Strip ANSI escape sequences (colors, cursor movement, OSC sequences) and normalize line endings
-            const rawOutput = chunks.join('');
-            const output = rawOutput
-                .replace(/\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07]*\x07|[()][AB012]|[=>78MH])/g, '')
-                .replace(/\r\n/g, '\n')
-                .replace(/\r/g, '\n')
-                .trim();
-
-            return {
-                sent: true,
-                output: output || '(no output captured)',
-                timeout_ms: timeoutMs
-            };
+            return { output, timeout_ms: timeoutMs };
         }
 
         default:
