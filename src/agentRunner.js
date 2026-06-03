@@ -56,9 +56,10 @@ class AgentRunner {
      *   onComplete({ messages, sessionState }) — final messages array + updated adapter state
      *   onError(message)                — fatal error string
      *   onStatus(text)                  — status line update
+     *   onUsage({ usage, uuid, msgId }) — token usage for the last API response (optional)
      */
     async run(mode, sessionMessages, initialSessionState, callbacks) {
-        const { onMessageStart, onToken, onStreamEnd, onToolStart, onToolEnd, onComplete, onError, onStatus } = callbacks;
+        const { onMessageStart, onToken, onStreamEnd, onToolStart, onToolEnd, onComplete, onError, onStatus, onUsage } = callbacks;
 
         this._abort = new AbortController();
         const signal = this._abort.signal;
@@ -96,6 +97,9 @@ class AgentRunner {
                 sessionState = result.sessionState;
 
                 onStreamEnd();
+                if (onUsage && (result.usage || result.uuid)) {
+                    onUsage({ usage: result.usage || null, uuid: result.uuid || null, msgId });
+                }
                 runMessages.push(assistantMsg);
 
                 // No tool calls → done

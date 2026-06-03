@@ -43,26 +43,29 @@ Drop [`marked.min.js`](https://github.com/markedjs/marked/releases) into the `me
 ## UI Reference
 
 ```
-┌────────────────────────────────────────────┐
-│ [Mode▼] [Endpoint▼] [Model▼] [⟳] [☰] [⚙] │  ← Toolbar
-├────────────────────────────────────────────┤
-│                                            │
-│  messages…                                 │  ← Chat area
-│                                            │
-├────────────────────────────────────────────┤
-│ Agent (step 2/20)…          [■ Stop]       │  ← Status bar
-├────────────────────────────────────────────┤
-│ ┌──────────────────────────────────────┐   │
-│ │ Type a message… (@ for file ref)   │ │  ← Input
-│ └──────────────────────────────────────┘   │
-│ [MD] [Stream] ──────────────────── [➤]    │  ← Toggles + send
-└────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│ [Mode▼] [Endpoint▼] [Model▼] [⟳] [⬡] [☰] [⚙]  │  ← Toolbar
+├──────────────────────────────────────────────────┤
+│ X,XXX / Y,YYY tokens this month             [✕]  │  ← Usage bar (Ask Sage)
+├──────────────────────────────────────────────────┤
+│                                                  │
+│  messages…                                       │  ← Chat area
+│                  1,234 tokens  ← usage badge     │
+├──────────────────────────────────────────────────┤
+│ Agent (step 2/20)…              [■ Stop]         │  ← Status bar
+├──────────────────────────────────────────────────┤
+│ ┌────────────────────────────────────────────┐   │
+│ │ Type a message… (@ for file ref)         │ │  ← Input
+│ └────────────────────────────────────────────┘   │
+│ [MD] [Stream] ────────────────────────── [➤]    │  ← Toggles + send
+└──────────────────────────────────────────────────┘
 ```
 
 **Toolbar icons:**
 | Icon | Action |
 |------|--------|
 | ⟳ | Refresh model list from API |
+| ⬡ | Show monthly token usage (Ask Sage endpoints only) |
 | ☰ | Open chat history panel |
 | ⚙ | Open inline settings panel |
 
@@ -245,9 +248,23 @@ Ask Sage exposes three API surfaces on the same server:
 |---------|----------------|
 | OpenAI sub-API | Use `adapter: "openai"` with `pathOverrides` pointing to `/openai/v1/...` |
 | Native Ask Sage API | Use `adapter: "ask-sage"` |
-| Anthropic sub-API | Use `adapter: "openai"` with `pathOverrides` (Claude-format assumed compatible) |
+| Anthropic sub-API | Use `adapter: "openai"` with `pathOverrides` |
 
-The `ask-sage` native adapter does not support streaming. No `adapterOptions` currently.
+The `ask-sage` native adapter uses the `/server/query` endpoint. Streaming is not supported (the full response is returned in one call). Multi-turn conversation history is sent as a `[{user, message}]` array; single-turn messages are sent as a plain string.
+
+Auth: set `apiKey` on the server to the `x-access-tokens` value obtained from `/user/get-token-with-api-key`.
+
+`adapterOptions`:
+| Option | Type | Description |
+|--------|------|-------------|
+| `persona` | number | Persona ID. Omit to use server default. |
+| `dataset` | string[] | Dataset names to include in the query (RAG). |
+| `live` | 0 \| 1 | `1` = include live web search results. |
+| `limitReferences` | number | Maximum RAG references to include. Default: 10. |
+| `system_prompt` | string | System prompt override. Takes precedence over the global `systemPrompt` setting. |
+| `reasoningEffort` | `"low"` \| `"medium"` \| `"high"` | Reasoning effort for o1/o3 models. |
+
+**Token usage:** After each response, a dim token count badge appears beneath the assistant message. Click **⬡** in the toolbar to fetch your monthly token usage from `/server/count-monthly-tokens`.
 
 ---
 
@@ -287,6 +304,5 @@ Verbose logging (toggle via command palette: "Standalone Agent: Toggle Verbose L
 - **No bundled syntax highlighting.** Code blocks in markdown responses are displayed without language-specific syntax colors unless you add a highlighting library to `media/`.
 - **Tool call format requires function calling support.** The model must support OpenAI-compatible `tools` / `tool_calls` in the response. Models that only support plain text will not be able to use tools (they will still work in Chat mode).
 - **Streaming partial JSON.** Some APIs send tool call arguments split across multiple stream chunks. The client reassembles these, but a very unusual chunk boundary could cause a parse failure. Disable streaming as a workaround.
-- **Ask Sage native adapter is provisional.** The `ask-sage` adapter contains placeholder logic pending on-site API verification. Use the OpenAI sub-API path with `adapter: "openai"` and `pathOverrides` for a confirmed working connection.
 - **No subagent / parallel processing** (planned — see ARCHITECTURE.md).
 - **No vector search / embeddings** (planned).

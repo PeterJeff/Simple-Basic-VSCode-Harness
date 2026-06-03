@@ -7,8 +7,8 @@
  *
  * Auth: x-access-tokens header (token obtained via /user/get-token-with-api-key)
  *
- * Native /server/query takes a single message string, not a messages array.
- * Multi-turn history is flattened into one prompt string before sending.
+ * /server/query accepts a plain string (single-turn) or a [{user,message}] array
+ * (multi-turn). System prompt is sent as a separate top-level field.
  * Streaming is not supported on /server/query.
  *
  * adapterOptions (all optional):
@@ -16,8 +16,11 @@
  *   dataset          {string[]}  Dataset names to query against
  *   live             {number}    1 = include web search, 0 = off
  *   limitReferences  {number}    Max RAG references to include
+ *   system_prompt    {string}    Override system prompt (takes precedence over messages)
+ *   reasoningEffort  {string}    'low'|'medium'|'high' for o1/o3 models
  *   queryPath        {string}    Override /server/query path
  *   modelsPath       {string}    Override /server/get-models path
+ *   monthlyUsagePath {string}    Override /server/count-monthly-tokens path
  */
 
 const logger = require('../logger');
@@ -35,25 +38,29 @@ function buildUrl(server, endpoint, key, defaultPath) {
     return server.url.replace(/\/+$/, '') + (override || defaultPath);
 }
 
-// Ask Sage /server/query takes a single string, not a messages array.
-// Flatten the conversation into one prompt, preserving context.
-function flattenMessages(messages) {
+// Convert OpenAI-format messages to Ask Sage's native format.
+// Single user turn → plain string. Multi-turn → [{user,message}] array.
+// System message is extracted separately for the top-level system_prompt field.
+function buildAskSageMessage(messages) {
     const system = messages.find(m => m.role === 'system');
-    const turns  = messages.filter(m => m.role !== 'system');
+    const turns  = messages.filter(m => m.role !== 'system' && m.role !== 'tool');
 
-    const parts = [];
-    if (system?.content) parts.push(system.content);
+    const systemPrompt = system?.content || null;
 
-    if (turns.length === 1 && turns[0].role === 'user') {
-        parts.push(turns[0].content || '');
+    let messagePayload;
+    if (turns.length === 0) {
+        messagePayload = '';
+    } else if (turns.length === 1 && turns[0].role === 'user') {
+        messagePayload = turns[0].content || '';
     } else {
-        for (const m of turns) {
-            const label = m.role === 'user' ? 'User' : 'Assistant';
-            parts.push(`${label}: ${m.content || ''}`);
-        }
+        const roleMap = { user: 'me', assistant: 'gpt' };
+        messagePayload = turns.map(m => ({
+            user: roleMap[m.role] || 'me',
+            message: m.content || ''
+        }));
     }
 
-    return parts.join('\n\n').trim();
+    return { messagePayload, systemPrompt };
 }
 
 module.exports = {
@@ -89,16 +96,17 @@ module.exports = {
         const url  = buildUrl(server, endpoint, 'query', '/server/query');
         const opts = endpoint.adapterOptions || {};
 
-        const body = {
-            message:     flattenMessages(messages),
-            model,
-            temperature: 0.1
-        };
+        const { messagePayload, systemPrompt: systemFromMessages } = buildAskSageMessage(messages);
+        const finalSystemPrompt = opts.system_prompt || systemFromMessages || null;
 
-        if (opts.persona         != null) body.persona           = opts.persona;
-        if (opts.dataset         != null) body.dataset            = opts.dataset;
-        if (opts.live            != null) body.live               = opts.live;
-        if (opts.limitReferences != null) body.limit_references   = opts.limitReferences;
+        const body = { message: messagePayload, model, temperature: 0.1 };
+
+        if (finalSystemPrompt)            body.system_prompt    = finalSystemPrompt;
+        if (opts.persona         != null) body.persona          = opts.persona;
+        if (opts.dataset         != null) body.dataset          = opts.dataset;
+        if (opts.live            != null) body.live             = opts.live;
+        if (opts.limitReferences != null) body.limit_references = opts.limitReferences;
+        if (opts.reasoningEffort != null) body.reasoning_effort = opts.reasoningEffort;
 
         logger.verbose('REQUEST', { url, body });
 
@@ -117,11 +125,30 @@ module.exports = {
         const data = await collectBody(res);
         logger.verbose('RESPONSE', data);
 
-        const text = data.response || data.message || data.text || data.content || data.answer || '';
+        const text  = data.message || data.response || data.text || data.content || data.answer || '';
+        const usage = data.usage || null;
+        const uuid  = data.uuid  || null;
         const reply = { role: 'assistant', content: text };
 
         if (text && onToken) onToken(text);
 
-        return { message: reply, sessionState: null };
+        return { message: reply, sessionState: null, usage, uuid };
+    },
+
+    async getMonthlyUsage(server, endpoint) {
+        const url = buildUrl(server, endpoint, 'monthlyUsage', '/server/count-monthly-tokens');
+        logger.log(`[ask-sage] getMonthlyUsage ${url}`);
+        const res = await nodeRequest(url, {
+            method: 'POST',
+            headers: askSageHeaders(server),
+            body: JSON.stringify({})
+        });
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+            const err = await collectBody(res).catch(() => ({}));
+            throw new Error(`API ${res.statusCode}: ${JSON.stringify(err).slice(0, 300)}`);
+        }
+        const data = await collectBody(res);
+        logger.verbose('MONTHLY_USAGE', data);
+        return data;
     }
 };

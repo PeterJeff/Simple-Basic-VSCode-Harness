@@ -162,6 +162,10 @@ class ChatViewProvider {
                 await this._updateSetting(msg.key, msg.value);
                 break;
 
+            case 'getMonthlyUsage':
+                await this._fetchMonthlyUsage();
+                break;
+
             case 'openSettings':
                 vscode.commands.executeCommand(
                     'workbench.action.openSettings',
@@ -284,6 +288,9 @@ class ChatViewProvider {
             onStreamEnd: () => {
                 this.sendToWebview({ type: 'streamEnd', id: this._streamMsgId });
             },
+            onUsage: ({ usage, uuid, msgId }) => {
+                this.sendToWebview({ type: 'usage', msgId, usage, uuid });
+            },
             onToolStart: (call) => {
                 this.sendToWebview({ type: 'toolStart', msgId: call.msgId, call });
             },
@@ -353,6 +360,28 @@ class ChatViewProvider {
         this._session = session;
         this._sessionState = null; // session state is ephemeral — don't carry over to loaded session
         this.sendToWebview({ type: 'loadSession', session });
+    }
+
+    // ── Ask Sage usage ─────────────────────────────────────────────────────────
+
+    async _fetchMonthlyUsage() {
+        let resolved;
+        try { resolved = api.resolveActive(); } catch (e) {
+            this.sendToWebview({ type: 'monthlyUsage', error: e.message });
+            return;
+        }
+        const { server, endpoint, adapter } = resolved;
+        if (typeof adapter.getMonthlyUsage !== 'function') {
+            this.sendToWebview({ type: 'monthlyUsage', error: 'Not supported by this adapter' });
+            return;
+        }
+        try {
+            const data = await adapter.getMonthlyUsage(server, endpoint);
+            this.sendToWebview({ type: 'monthlyUsage', data });
+        } catch (e) {
+            logger.error('getMonthlyUsage', e);
+            this.sendToWebview({ type: 'monthlyUsage', error: e.message });
+        }
     }
 
     // ── Settings updates ───────────────────────────────────────────────────────

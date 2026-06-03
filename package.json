@@ -96,7 +96,7 @@
         "standaloneAgent.endpoints": {
           "type": "array",
           "order": 3,
-          "markdownDescription": "Logical endpoints — each combines a server with an adapter type and optional overrides.\n\n**Adapters:** `openai`, `gemini-jank`, `gemini`, `ask-sage`\n\nFor Ask Sage's OpenAI sub-API: use `adapter: \"openai\"` with `pathOverrides`.\n\nPer-endpoint `streaming` overrides the global toggle. `model` overrides the sidebar model selector.",
+          "markdownDescription": "Logical endpoints — each combines a server with an adapter type and optional overrides.\n\n**Adapters:** `openai`, `gemini-jank`, `gemini`, `ask-sage`\n\nFor Ask Sage's OpenAI sub-API: use `adapter: \"openai\"` with `pathOverrides`.\n\nPer-endpoint `streaming` overrides the global toggle. `model` overrides the sidebar model selector.\n\n**Ask Sage `adapterOptions`:** `persona`, `dataset`, `live`, `limitReferences`, `system_prompt`, `reasoningEffort`",
           "default": [
             {
               "name": "Local OpenAI",
@@ -134,8 +134,14 @@
               },
               "adapterOptions": {
                 "type": "object",
-                "markdownDescription": "Adapter-specific options.\n\n**gemini-jank:** `sessionField`, `modelField`, `minWordCount`, `systemTag`, `historyTag`, `currentTag`\n\n**gemini:** `apiVersion`, `useQueryKey`, `cachedContent`",
+                "markdownDescription": "Adapter-specific options.\n\n**ask-sage:** `persona`, `dataset`, `live`, `limitReferences`, `system_prompt`, `reasoningEffort`\n\n**gemini-jank:** `sessionField`, `modelField`, `minWordCount`, `systemTag`, `historyTag`, `currentTag`\n\n**gemini:** `apiVersion`, `useQueryKey`, `cachedContent`",
                 "properties": {
+                  "persona":          { "type": "number",  "description": "[ask-sage] Persona ID. Omit to use server default." },
+                  "dataset":          { "type": "array", "items": { "type": "string" }, "description": "[ask-sage] Dataset names to include in the query." },
+                  "live":             { "type": "number", "enum": [0, 1], "description": "[ask-sage] 1 = include live web search results, 0 = off." },
+                  "limitReferences":  { "type": "number", "description": "[ask-sage] Maximum RAG references to include. Default: 10." },
+                  "system_prompt":    { "type": "string",  "description": "[ask-sage] System prompt override. Takes precedence over the global systemPrompt setting." },
+                  "reasoningEffort":  { "type": "string", "enum": ["low", "medium", "high"], "description": "[ask-sage] Reasoning effort for supported models (o1/o3)." },
                   "sessionField":   { "type": "string",  "description": "[gemini-jank] Response/request field for the session ID. Default: session_id" },
                   "modelField":     { "type": "string",  "description": "[gemini-jank] Request field for the model name. Default: model" },
                   "minWordCount":   { "type": "number",  "description": "[gemini-jank] Minimum word count for collapsed messages. Default: 0 (disabled)" },

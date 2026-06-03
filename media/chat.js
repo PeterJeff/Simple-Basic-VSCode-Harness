@@ -28,6 +28,7 @@
         atCursorStart:    -1,
         atDropdownItems:  [],
         atSelectedIdx:    -1,
+        usageByMsgId:     {},
     };
 
     // ── Build DOM ────────────────────────────────────────────────────────────
@@ -42,8 +43,14 @@
   <select id="endpoint-select" title="Endpoint"></select>
   <select id="model-select" title="Model"><option value="">-- model --</option></select>
   <button class="icon-btn" id="refresh-models-btn" title="Refresh model list">⟳</button>
+  <button class="icon-btn" id="monthly-usage-btn" title="Show monthly token usage">⬡</button>
   <button class="icon-btn" id="history-btn" title="Chat history">☰</button>
   <button class="icon-btn" id="settings-btn" title="Settings">⚙</button>
+</div>
+
+<div id="monthly-usage-bar">
+  <span id="monthly-usage-display"></span>
+  <button class="icon-btn" id="monthly-usage-close">✕</button>
 </div>
 
 <div id="main">
@@ -169,8 +176,12 @@
         openVscodeSettings: q('#open-vscode-settings'),
         serverList:         q('#server-list'),
         addServerBtn:       q('#add-server-btn'),
-        endpointList:       q('#endpoint-list'),
-        addEndpointBtn:     q('#add-endpoint-btn'),
+        endpointList:         q('#endpoint-list'),
+        addEndpointBtn:       q('#add-endpoint-btn'),
+        monthlyUsageBtn:      q('#monthly-usage-btn'),
+        monthlyUsageBar:      q('#monthly-usage-bar'),
+        monthlyUsageDisplay:  q('#monthly-usage-display'),
+        monthlyUsageClose:    q('#monthly-usage-close'),
     };
 
     function q(sel) { return document.querySelector(sel); }
@@ -269,6 +280,19 @@
     };
 
     // ── Message rendering ────────────────────────────────────────────────────
+
+    function _applyUsageBadge(msgEl, usage) {
+        if (!usage) return;
+        msgEl.querySelector('.usage-badge')?.remove();
+        const total = usage.total_tokens || usage.totalTokens
+                   || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)) || null;
+        if (!total) return;
+        const badge = document.createElement('div');
+        badge.className = 'usage-badge';
+        badge.textContent = `${total.toLocaleString()} tokens`;
+        const footer = msgEl.querySelector('.msg-footer');
+        footer ? msgEl.insertBefore(badge, footer) : msgEl.appendChild(badge);
+    }
 
     function createUserEl(msg) {
         const div = document.createElement('div');
@@ -387,7 +411,9 @@
             if (msg.role === 'user') {
                 el.messages.appendChild(createUserEl(msg));
             } else if (msg.role === 'assistant') {
-                el.messages.appendChild(createAssistantEl(msg));
+                const domEl = createAssistantEl(msg);
+                if (state.usageByMsgId[msg.id]) _applyUsageBadge(domEl, state.usageByMsgId[msg.id].usage);
+                el.messages.appendChild(domEl);
             } else if (msg.role === 'error') {
                 el.messages.appendChild(createErrorEl(msg.raw));
             }
@@ -462,6 +488,15 @@
         el.refreshModels.textContent = '…';
         vscode.postMessage({ type: 'getModels' });
         setTimeout(() => { el.refreshModels.textContent = '⟳'; }, 2000);
+    });
+
+    el.monthlyUsageBtn.addEventListener('click', () => {
+        el.monthlyUsageDisplay.textContent = 'Loading…';
+        el.monthlyUsageBar.style.display = 'flex';
+        vscode.postMessage({ type: 'getMonthlyUsage' });
+    });
+    el.monthlyUsageClose.addEventListener('click', () => {
+        el.monthlyUsageBar.style.display = 'none';
     });
 
     el.historyBtn.addEventListener('click', () => {
@@ -1009,6 +1044,27 @@
                 if (aMsg) aMsg.pending = false;
                 const domEl = el.messages.querySelector(`[data-id="${CSS.escape(msg.id)}"]`);
                 if (domEl) domEl.classList.remove('streaming');
+                break;
+            }
+
+            case 'usage': {
+                state.usageByMsgId[msg.msgId] = { usage: msg.usage, uuid: msg.uuid };
+                const domEl = el.messages.querySelector(`[data-id="${CSS.escape(msg.msgId)}"]`);
+                if (domEl) _applyUsageBadge(domEl, msg.usage);
+                break;
+            }
+
+            case 'monthlyUsage': {
+                if (msg.error) {
+                    el.monthlyUsageDisplay.textContent = 'Error: ' + msg.error;
+                } else {
+                    const d = msg.data || {};
+                    const used  = d.tokens_used  || d.tokensUsed  || d.used  || d.count  || '?';
+                    const limit = d.token_limit   || d.tokenLimit  || d.limit || null;
+                    el.monthlyUsageDisplay.textContent = limit
+                        ? `${Number(used).toLocaleString()} / ${Number(limit).toLocaleString()} tokens this month`
+                        : `${Number(used).toLocaleString()} tokens used this month`;
+                }
                 break;
             }
 

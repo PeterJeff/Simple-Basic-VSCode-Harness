@@ -633,6 +633,30 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 }
 .retry-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 
+/* ── Token usage badge ──────────────────────────────────────────────────────── */
+.usage-badge {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.55;
+    margin-top: 3px;
+    padding: 0 2px;
+    letter-spacing: 0.02em;
+}
+
+/* ── Monthly usage bar ──────────────────────────────────────────────────────── */
+#monthly-usage-bar {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    background: var(--vscode-editorWidget-background, rgba(128,128,128,0.08));
+    border-bottom: 1px solid var(--vscode-widget-border, #333);
+    flex-shrink: 0;
+}
+#monthly-usage-display { flex: 1; }
+
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
