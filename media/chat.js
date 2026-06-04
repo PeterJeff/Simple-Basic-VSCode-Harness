@@ -16,6 +16,7 @@
         enterToSend:          true,
         verbose:              false,
         sessions:             [],
+        currentSessionId:     '',
         messages:             [],      // { id, role, raw, toolCalls:[], pending? }
         toolPermissions:      {},
         toolDefs:             [],
@@ -31,6 +32,7 @@
         usageByMsgId:         {},
         toolCallMode:         'api',
         supportsMonthlyUsage: false,
+        codeContextBlocks:    [],   // [{ id, code, file, startLine, endLine }]
     };
 
     // ── Build DOM ────────────────────────────────────────────────────────────
@@ -64,8 +66,9 @@
     </div>
     <div id="input-area" style="position:relative;">
       <div id="at-dropdown"></div>
+      <div id="context-chips"></div>
       <div id="input-row">
-        <textarea id="msg-input" rows="2" placeholder="Message… (@ = insert file)"></textarea>
+        <textarea id="msg-input" rows="2" placeholder="Message… (@ = insert file, Ctrl+Shift+L = add selection)"></textarea>
         <button id="send-btn" title="Send (Enter)">➤</button>
       </div>
       <div id="input-toggles">
@@ -81,9 +84,13 @@
   <div id="history-panel">
     <div class="panel-header">
       History
+      <button class="icon-btn" id="graph-toggle-btn" title="Show session graph">⋮</button>
       <button class="panel-close" id="history-close">✕</button>
     </div>
     <div id="session-list"></div>
+    <div id="graph-view" style="display:none; flex:1; overflow:auto; background:var(--vscode-editor-background);">
+      <svg id="history-svg" style="display:block; min-width:200px; min-height:200px;"></svg>
+    </div>
   </div>
 
   <div id="settings-panel">
@@ -166,9 +173,13 @@
         tcModeBtn:            q('#tc-mode-btn'),
         iterBadge:            q('#iter-badge'),
         atDropdown:           q('#at-dropdown'),
+        contextChips:         q('#context-chips'),
         historyPanel:         q('#history-panel'),
         historyClose:         q('#history-close'),
         sessionList:          q('#session-list'),
+        graphToggleBtn:       q('#graph-toggle-btn'),
+        graphView:            q('#graph-view'),
+        historySvg:           q('#history-svg'),
         settingsPanel:        q('#settings-panel'),
         settingsClose:        q('#settings-close'),
         setMaxIter:           q('#set-max-iter'),
@@ -190,6 +201,45 @@
 
     function q(sel) { return document.querySelector(sel); }
 
+    // ── Clipboard helper (routes through extension host) ─────────────────────
+
+    function copyToClipboard(text, btn) {
+        vscode.postMessage({ type: 'copyToClipboard', text: String(text) });
+        if (btn) {
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = orig; }, 1500);
+        }
+    }
+
+    // Attach event-delegated copy listener to a container (post innerHTML assignment)
+    function attachCopyListeners(container) {
+        container.querySelectorAll('.copy-btn:not([data-cl])').forEach(btn => {
+            btn.setAttribute('data-cl', '1');
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const code = btn.nextElementSibling?.textContent || '';
+                copyToClipboard(code, btn);
+            });
+        });
+    }
+
+    // Add copy buttons to <pre> elements that don't yet have one (for VSCode-rendered markdown)
+    function addCopyBtnsToPreElements(container) {
+        container.querySelectorAll('pre').forEach(pre => {
+            if (pre.querySelector('.copy-btn')) return;
+            const btn = document.createElement('button');
+            btn.className = 'copy-btn';
+            btn.textContent = 'Copy';
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const code = pre.querySelector('code')?.textContent || pre.textContent;
+                copyToClipboard(code, btn);
+            });
+            pre.appendChild(btn);
+        });
+    }
+
     // ── Markdown renderer ────────────────────────────────────────────────────
 
     function renderMarkdown(raw) {
@@ -206,7 +256,7 @@
     function builtinMd(text) {
         let h = esc(text);
         h = h.replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-            return `<pre><button class="copy-btn" onclick="copyCode(this)">Copy</button>`
+            return `<pre><button class="copy-btn">Copy</button>`
                  + `<code class="lang-${esc(lang)}">${code}</code></pre>`;
         });
         h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
@@ -252,14 +302,6 @@
         return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
     }
 
-    window.copyCode = function(btn) {
-        const code = btn.nextElementSibling?.textContent || '';
-        navigator.clipboard?.writeText(code).then(() => {
-            btn.textContent = 'Copied!';
-            setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
-        });
-    };
-
     // ── Tool call summary (human-readable one-liner for approval cards) ───────
 
     function toolCallSummary(name, args) {
@@ -273,10 +315,7 @@
             case 'run_terminal':    return String(args.command || '').slice(0, 80);
             case 'get_git_diff':    return args.path ? `${args.path}${args.staged ? ' (staged)' : ''}` : (args.staged ? 'staged' : 'workspace');
             case 'get_symbols':     return args.path || '';
-            default: {
-                const j = JSON.stringify(args);
-                return (j && j !== '{}') ? j.slice(0, 60) : '';
-            }
+            default:                return String(args ? JSON.stringify(args) : '').slice(0, 60);
         }
     }
 
@@ -286,49 +325,51 @@
         if (!usage || typeof usage !== 'object') return;
         msgEl.querySelector('.usage-badge')?.remove();
 
-        const promptTok     = usage.prompt_tokens     ?? usage.input_tokens    ?? null;
-        const completionTok = usage.completion_tokens ?? usage.output_tokens   ?? null;
-        const totalTok      = usage.total_tokens      ?? usage.totalTokens
-                           ?? (promptTok != null && completionTok != null ? promptTok + completionTok : null);
+        const input  = usage.input  ?? null;
+        const output = usage.output ?? null;
+        const total  = usage.total  ?? null;
+        const cost   = usage.cost   ?? {};
+        const extra  = Array.isArray(usage.extra) ? usage.extra : [];
 
-        const inputCost  = usage.input_cost   ?? usage.prompt_cost       ?? usage.token_input_cost  ?? usage.cost_input  ?? null;
-        const outputCost = usage.output_cost  ?? usage.completion_cost   ?? usage.token_output_cost ?? usage.cost_output ?? null;
-        const tokenCost  = usage.token_cost   ?? null;  // Ask Sage flat "cost of this call in tokens"
-        const totalCost  = usage.total_cost   ?? usage.cost              ?? usage.totalCost         ?? null;
-
-        const hasCost = inputCost != null || outputCost != null || totalCost != null || tokenCost != null;
-        if (totalTok == null && promptTok == null && !hasCost) return;
+        const hasTokens = total != null || input != null;
+        const hasCost   = cost.input != null || cost.output != null || cost.total != null || cost.tokenCost != null;
+        if (!hasTokens && !hasCost && extra.length === 0) return;
 
         const badge = document.createElement('div');
         badge.className = 'usage-badge';
 
-        // Token counts line
-        if (totalTok != null || promptTok != null) {
+        if (hasTokens) {
             const tokenLine = document.createElement('div');
             tokenLine.className = 'usage-line usage-tokens';
             const parts = [];
-            if (totalTok != null) parts.push(Number(totalTok).toLocaleString() + ' tokens');
-            if (promptTok != null) parts.push('↑' + Number(promptTok).toLocaleString());
-            if (completionTok != null) parts.push('↓' + Number(completionTok).toLocaleString());
+            if (total  != null) parts.push(Number(total).toLocaleString() + ' tokens');
+            if (input  != null) parts.push('↑' + Number(input).toLocaleString());
+            if (output != null) parts.push('↓' + Number(output).toLocaleString());
             tokenLine.textContent = parts.join('  ');
             badge.appendChild(tokenLine);
         }
 
-        // Cost line (dollar amounts)
         if (hasCost) {
             const costLine = document.createElement('div');
             costLine.className = 'usage-line usage-cost';
             const parts = [];
-            if (tokenCost != null)  parts.push('tc:' + Number(tokenCost).toLocaleString());
-            if (inputCost != null)  parts.push('in $' + Number(inputCost).toFixed(6));
-            if (outputCost != null) parts.push('out $' + Number(outputCost).toFixed(6));
-            if (totalCost != null && (inputCost != null || outputCost != null)) {
-                parts.push('= $' + Number(totalCost).toFixed(6));
-            } else if (totalCost != null) {
-                parts.push('$' + Number(totalCost).toFixed(6));
+            if (cost.tokenCost != null) parts.push('tc:' + Number(cost.tokenCost).toLocaleString());
+            if (cost.input     != null) parts.push('in $' + Number(cost.input).toFixed(6));
+            if (cost.output    != null) parts.push('out $' + Number(cost.output).toFixed(6));
+            if (cost.total     != null && (cost.input != null || cost.output != null)) {
+                parts.push('= $' + Number(cost.total).toFixed(6));
+            } else if (cost.total != null) {
+                parts.push('$' + Number(cost.total).toFixed(6));
             }
             costLine.textContent = parts.join('  ');
             badge.appendChild(costLine);
+        }
+
+        if (extra.length > 0) {
+            const extraLine = document.createElement('div');
+            extraLine.className = 'usage-line usage-tokens';
+            extraLine.textContent = extra.map(e => `${e.name}: ${e.value}`).join('  ');
+            badge.appendChild(extraLine);
         }
 
         if (badge.children.length === 0) return;
@@ -345,6 +386,9 @@
         if (msg.contextFiles && msg.contextFiles.length > 0) {
             html += `<div class="ctx-files">📎 ${msg.contextFiles.map(esc).join(', ')}</div>`;
         }
+        if (msg.codeContexts && msg.codeContexts.length > 0) {
+            html += `<div class="ctx-files">📌 ${msg.codeContexts.map(c => esc(`${c.file}:${c.startLine}–${c.endLine}`)).join(', ')}</div>`;
+        }
         const ts = msg.ts ? fmtTime(msg.ts) : '';
         html += `<div class="msg-footer">
   <button class="msg-action-btn msg-edit-btn" title="Edit &amp; fork conversation from here">✎</button>
@@ -356,10 +400,7 @@
 
         div.querySelector('.msg-edit-btn').addEventListener('click', () => handleEdit(msg.id));
         div.querySelector('.msg-copy-btn').addEventListener('click', function() {
-            navigator.clipboard?.writeText(msg.raw).then(() => {
-                this.textContent = '✓';
-                setTimeout(() => { this.textContent = '⎘'; }, 1500);
-            });
+            copyToClipboard(msg.raw, this);
         });
 
         return div;
@@ -378,8 +419,10 @@
                 contentDiv.innerHTML = `<pre>${esc(msg.raw)}</pre>`;
             } else if (msg.renderedHtml) {
                 contentDiv.innerHTML = msg.renderedHtml;
+                addCopyBtnsToPreElements(contentDiv);
             } else {
                 contentDiv.innerHTML = renderMarkdown(msg.raw);
+                attachCopyListeners(contentDiv);
             }
         }
         div.appendChild(contentDiv);
@@ -397,10 +440,7 @@
         copyBtn.title = 'Copy raw text';
         copyBtn.textContent = '⎘';
         copyBtn.addEventListener('click', function() {
-            navigator.clipboard?.writeText(msg.raw).then(() => {
-                this.textContent = '✓';
-                setTimeout(() => { this.textContent = '⎘'; }, 1500);
-            });
+            copyToClipboard(msg.raw, this);
         });
         const spacer = document.createElement('span');
         spacer.style.flex = '1';
@@ -429,48 +469,280 @@
         return div;
     }
 
+    // ── Tool call blocks (redesigned with tabbed expand panel) ───────────────
+
     function createToolBlock(tc) {
         const block = document.createElement('div');
         block.className = 'tool-block';
         block.dataset.tcid = tc.id;
 
-        const stateIcon = tc.done ? (tc.result?.error ? '✕' : '✓') : '<span class="tool-spinner">⟳</span>';
-        const stateText = tc.done ? (tc.result?.error ? 'error' : 'done') : 'running…';
+        // Header
+        const header = document.createElement('div');
+        header.className = 'tool-header';
 
-        const args = tc.args ? JSON.stringify(tc.args, null, 2) : '';
-        const resultText = tc.result ? JSON.stringify(tc.result, null, 2) : '';
-        const isDiffable = tc.done && !tc.result?.error &&
-            (tc.name === 'write_file' || tc.name === 'edit_file') && tc.args?.path;
+        const toggleIcon = document.createElement('span');
+        toggleIcon.className = 'tool-toggle-icon';
+        toggleIcon.textContent = '▸';
 
-        block.innerHTML = `
-<div class="tool-header" onclick="this.parentElement.classList.toggle('open')">
-  <span class="tool-toggle-icon">▸</span>
-  <span>${stateIcon}</span>
-  <span class="tool-name">${esc(tc.name)}</span>
-  <span class="tool-summary">${esc(toolCallSummary(tc.name, tc.args || {}))}</span>
-  <span class="tool-state">${stateText}</span>
-  ${tc.done ? `<button class="tool-view-btn" title="Open args &amp; result in editor">⊡</button>` : ''}
-  ${isDiffable ? `<button class="tool-diff-btn" title="View git diff">⊕ Diff</button>` : ''}
-</div>
-<div class="tool-body">${tc.done
-    ? `<b>args:</b>\n${esc(args)}\n\n<b>result:</b>\n${esc(resultText)}`
-    : `<b>args:</b>\n${esc(args)}`
-}</div>`;
+        const stateIconSpan = document.createElement('span');
+        stateIconSpan.className = 'tool-state-icon';
+        if (tc.done) {
+            stateIconSpan.textContent = tc.result?.error ? '✕' : '✓';
+        } else {
+            const spinner = document.createElement('span');
+            spinner.className = 'tool-spinner';
+            spinner.textContent = '⟳';
+            stateIconSpan.appendChild(spinner);
+        }
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'tool-name';
+        nameSpan.textContent = tc.name;
+
+        const summarySpan = document.createElement('span');
+        summarySpan.className = 'tool-summary';
+        summarySpan.textContent = toolCallSummary(tc.name, tc.args || {});
+
+        const stateText = document.createElement('span');
+        stateText.className = 'tool-state';
+        stateText.textContent = tc.done ? (tc.result?.error ? 'error' : 'done') : 'running…';
+
+        header.appendChild(toggleIcon);
+        header.appendChild(stateIconSpan);
+        header.appendChild(nameSpan);
+        header.appendChild(summarySpan);
+        header.appendChild(stateText);
 
         if (tc.done) {
-            block.querySelector('.tool-view-btn')?.addEventListener('click', (e) => {
+            const viewBtn = document.createElement('button');
+            viewBtn.className = 'tool-view-btn';
+            viewBtn.title = 'Open full JSON in editor';
+            viewBtn.textContent = '⊡';
+            viewBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 _openToolPreview(tc.name, tc.args, tc.result);
             });
-        }
-        if (isDiffable) {
-            block.querySelector('.tool-diff-btn')?.addEventListener('click', (e) => {
-                e.stopPropagation();
-                vscode.postMessage({ type: 'showDiff', path: tc.args.path });
-            });
+            header.appendChild(viewBtn);
         }
 
+        header.addEventListener('click', () => block.classList.toggle('open'));
+
+        // Body
+        const body = document.createElement('div');
+        body.className = 'tool-body';
+        _buildToolBody(body, tc);
+
+        block.appendChild(header);
+        block.appendChild(body);
         return block;
+    }
+
+    function _buildToolBody(bodyEl, tc) {
+        bodyEl.innerHTML = '';
+
+        if (!tc.done) {
+            const running = document.createElement('div');
+            running.className = 'tool-body-running';
+            running.textContent = tc.args ? JSON.stringify(tc.args, null, 2) : '';
+            bodyEl.appendChild(running);
+            return;
+        }
+
+        // Tab bar
+        const tabBar = document.createElement('div');
+        tabBar.className = 'tool-tab-bar';
+
+        const fmtTab = document.createElement('button');
+        fmtTab.className = 'tool-tab active';
+        fmtTab.textContent = 'Formatted';
+
+        const rawTab = document.createElement('button');
+        rawTab.className = 'tool-tab';
+        rawTab.textContent = 'Raw JSON';
+
+        tabBar.appendChild(fmtTab);
+        tabBar.appendChild(rawTab);
+
+        const fmtPanel = document.createElement('div');
+        fmtPanel.className = 'tool-panel-formatted active';
+        _renderFormattedPanel(fmtPanel, tc);
+
+        const rawPanel = document.createElement('div');
+        rawPanel.className = 'tool-panel-raw';
+        _renderRawPanel(rawPanel, tc);
+
+        fmtTab.addEventListener('click', () => {
+            fmtTab.classList.add('active'); rawTab.classList.remove('active');
+            fmtPanel.classList.add('active'); rawPanel.classList.remove('active');
+        });
+        rawTab.addEventListener('click', () => {
+            rawTab.classList.add('active'); fmtTab.classList.remove('active');
+            rawPanel.classList.add('active'); fmtPanel.classList.remove('active');
+        });
+
+        bodyEl.appendChild(tabBar);
+        bodyEl.appendChild(fmtPanel);
+        bodyEl.appendChild(rawPanel);
+    }
+
+    function _renderFormattedPanel(panelEl, tc) {
+        const n = tc.name;
+        const args   = tc.args   || {};
+        const result = tc.result || {};
+        if (n === 'edit_file' || n === 'write_file') {
+            _renderFileMutationPanel(panelEl, tc, args, result);
+        } else if (n === 'run_terminal') {
+            _renderTerminalPanel(panelEl, args, result);
+        } else if (n === 'read_file') {
+            _renderReadFilePanel(panelEl, args, result);
+        } else {
+            _renderGenericPanel(panelEl, args, result);
+        }
+    }
+
+    function _renderFileMutationPanel(panelEl, tc, args, result) {
+        if (!result.error && args.path) {
+            const diffBtn = document.createElement('button');
+            diffBtn.className = 'tool-open-diff-btn';
+            diffBtn.textContent = '⊕ View Diff in Editor';
+            diffBtn.addEventListener('click', () => vscode.postMessage({ type: 'showDiff', path: args.path }));
+            panelEl.appendChild(diffBtn);
+        }
+
+        if (tc.name === 'edit_file' && (args.old_string !== undefined || args.new_string !== undefined)) {
+            const preview = document.createElement('div');
+            preview.className = 'tool-diff-preview';
+
+            const makeSide = (cls, labelText, content) => {
+                const side = document.createElement('div');
+                side.className = cls;
+                const lbl = document.createElement('div');
+                lbl.className = 'tool-diff-label';
+                lbl.textContent = labelText;
+                const pre = document.createElement('pre');
+                pre.textContent = String(content || '').slice(0, 600);
+                side.appendChild(lbl);
+                side.appendChild(pre);
+                return side;
+            };
+
+            preview.appendChild(makeSide('tool-diff-old', 'Before', args.old_string));
+            preview.appendChild(makeSide('tool-diff-new', 'After',  args.new_string));
+            panelEl.appendChild(preview);
+        } else if (tc.name === 'write_file' && args.path) {
+            const section = document.createElement('div');
+            section.className = 'tool-section';
+            const lbl = document.createElement('div');
+            lbl.className = 'tool-section-label';
+            lbl.textContent = 'Written to';
+            const pathDiv = document.createElement('div');
+            pathDiv.className = 'tool-file-path';
+            pathDiv.textContent = args.path;
+            section.appendChild(lbl);
+            section.appendChild(pathDiv);
+            panelEl.appendChild(section);
+        }
+    }
+
+    function _renderTerminalPanel(panelEl, args, result) {
+        const makeSection = (labelText, contentEl) => {
+            const section = document.createElement('div');
+            section.className = 'tool-section';
+            const lbl = document.createElement('div');
+            lbl.className = 'tool-section-label';
+            lbl.textContent = labelText;
+            section.appendChild(lbl);
+            section.appendChild(contentEl);
+            return section;
+        };
+
+        const cmd = String(args.command || '');
+        const cmdContent = document.createElement('div');
+        cmdContent.className = 'tool-section-content';
+        const firstSpace = cmd.indexOf(' ');
+        if (firstSpace > 0) {
+            const strong = document.createElement('strong');
+            strong.textContent = cmd.slice(0, firstSpace);
+            cmdContent.appendChild(strong);
+            cmdContent.appendChild(document.createTextNode(cmd.slice(firstSpace)));
+        } else {
+            cmdContent.textContent = cmd;
+        }
+
+        const resText = typeof result === 'string'
+            ? result
+            : result.output || result.stdout || result.error || JSON.stringify(result, null, 2);
+        const resContent = document.createElement('div');
+        resContent.className = 'tool-section-content';
+        resContent.textContent = String(resText || '').slice(0, 2000);
+
+        panelEl.appendChild(makeSection('Command', cmdContent));
+        panelEl.appendChild(makeSection('Result', resContent));
+    }
+
+    function _renderReadFilePanel(panelEl, args, result) {
+        if (args.path) {
+            const pathDiv = document.createElement('div');
+            pathDiv.className = 'tool-file-path';
+            pathDiv.textContent = args.path;
+            panelEl.appendChild(pathDiv);
+        }
+        const content = typeof result === 'string'
+            ? result
+            : result.content || result.output || JSON.stringify(result, null, 2);
+        const lines = String(content || '').split('\n').slice(0, 200);
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'tool-lined-content';
+
+        const nums = document.createElement('div');
+        nums.className = 'tool-line-nums';
+        nums.textContent = lines.map((_, i) => i + 1).join('\n');
+
+        const code = document.createElement('div');
+        code.className = 'tool-line-code';
+        code.textContent = lines.join('\n');
+
+        wrapper.appendChild(nums);
+        wrapper.appendChild(code);
+        panelEl.appendChild(wrapper);
+    }
+
+    function _renderGenericPanel(panelEl, args, result) {
+        const twoCol = document.createElement('div');
+        twoCol.className = 'tool-two-col';
+
+        const makeCol = (labelText, data) => {
+            const section = document.createElement('div');
+            section.className = 'tool-section';
+            const lbl = document.createElement('div');
+            lbl.className = 'tool-section-label';
+            lbl.textContent = labelText;
+            const content = document.createElement('div');
+            content.className = 'tool-section-content';
+            content.textContent = JSON.stringify(data, null, 2);
+            section.appendChild(lbl);
+            section.appendChild(content);
+            return section;
+        };
+
+        twoCol.appendChild(makeCol('Arguments', args));
+        twoCol.appendChild(makeCol('Result', result));
+        panelEl.appendChild(twoCol);
+    }
+
+    function _renderRawPanel(panelEl, tc) {
+        const rawJson = JSON.stringify({ tool: tc.name, args: tc.args || {}, result: tc.result || {} }, null, 2);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'tool-raw-copy-btn';
+        copyBtn.textContent = 'Copy';
+        copyBtn.addEventListener('click', () => copyToClipboard(rawJson, copyBtn));
+
+        const pre = document.createElement('pre');
+        pre.appendChild(copyBtn);
+        pre.appendChild(document.createTextNode(rawJson));
+        panelEl.appendChild(pre);
     }
 
     function _openToolPreview(name, args, result) {
@@ -490,7 +762,6 @@
         card.className = 'tool-approval-card';
         card.dataset.callid = callId;
 
-        // Header
         const header = document.createElement('div');
         header.className = 'tool-approval-header';
 
@@ -527,7 +798,6 @@
         header.appendChild(expandBtn);
         header.appendChild(rawBtn);
 
-        // Expandable body
         const body = document.createElement('div');
         body.className = 'tool-approval-body';
         body.style.display = 'none';
@@ -536,7 +806,6 @@
         pre.textContent = argsJson;
         body.appendChild(pre);
 
-        // Actions
         const actions = document.createElement('div');
         actions.className = 'tool-approval-actions';
 
@@ -548,7 +817,7 @@
         allowAlwaysBtn.className = 'tap-allow-always';
         allowAlwaysBtn.textContent = 'Allow Always';
 
-        const denyBtn        = document.createElement('button');
+        const denyBtn = document.createElement('button');
         denyBtn.className = 'tap-deny';
         denyBtn.textContent = 'Deny';
 
@@ -560,7 +829,6 @@
         card.appendChild(body);
         card.appendChild(actions);
 
-        // Event handlers
         expandBtn.addEventListener('click', () => {
             const open = body.style.display !== 'none';
             body.style.display = open ? 'none' : 'block';
@@ -574,14 +842,12 @@
 
         const respond = (decision) => {
             if (decision === 'deny') {
-                // Mark the card as denied visually
                 card.classList.add('tap-denied');
                 actions.remove();
                 statusSpan.textContent = '✕ Denied';
                 icon.textContent = '✕';
                 icon.style.color = 'var(--vscode-errorForeground, #f66)';
             } else {
-                // Approved — remove card; toolStart event will add the running tool block
                 card.remove();
             }
             vscode.postMessage({ type: 'toolApprovalResponse', callId, decision });
@@ -593,6 +859,68 @@
 
         return card;
     }
+
+    // ── Context chips ─────────────────────────────────────────────────────────
+
+    function renderContextChips() {
+        el.contextChips.innerHTML = '';
+        if (state.codeContextBlocks.length === 0) {
+            el.contextChips.style.display = 'none';
+            return;
+        }
+        el.contextChips.style.display = 'flex';
+
+        for (const block of state.codeContextBlocks) {
+            const chip = document.createElement('div');
+            chip.className = 'ctx-chip';
+            chip.dataset.id = block.id;
+
+            const icon = document.createElement('span');
+            icon.className = 'ctx-chip-icon';
+            icon.textContent = '📄';
+
+            const label = document.createElement('span');
+            label.className = 'ctx-chip-label';
+            const fname = block.file.replace(/\\/g, '/').split('/').pop();
+            label.textContent = `${fname}:${block.startLine}–${block.endLine}`;
+            label.title = `${block.file} lines ${block.startLine}–${block.endLine}`;
+
+            const toggleBtn = document.createElement('button');
+            toggleBtn.className = 'ctx-chip-toggle';
+            toggleBtn.textContent = '▸';
+            toggleBtn.title = 'Preview';
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'ctx-chip-remove';
+            removeBtn.textContent = '✕';
+            removeBtn.title = 'Remove from context';
+
+            const preview = document.createElement('pre');
+            preview.className = 'ctx-chip-preview';
+            preview.textContent = block.code.slice(0, 500) + (block.code.length > 500 ? '\n…' : '');
+            preview.style.display = 'none';
+
+            toggleBtn.addEventListener('click', () => {
+                const open = preview.style.display !== 'none';
+                preview.style.display = open ? 'none' : 'block';
+                toggleBtn.textContent = open ? '▸' : '▾';
+            });
+
+            removeBtn.addEventListener('click', () => {
+                state.codeContextBlocks = state.codeContextBlocks.filter(b => b.id !== block.id);
+                renderContextChips();
+            });
+
+            chip.appendChild(icon);
+            chip.appendChild(label);
+            chip.appendChild(toggleBtn);
+            chip.appendChild(removeBtn);
+            chip.appendChild(preview);
+            el.contextChips.appendChild(chip);
+        }
+    }
+
+    // ── Rerender helpers ─────────────────────────────────────────────────────
 
     function rerenderAll() {
         el.messages.innerHTML = '';
@@ -684,11 +1012,26 @@
         el.monthlyUsageBar.style.display = 'none';
     });
 
+    let graphViewActive = false;
+
     el.historyBtn.addEventListener('click', () => {
         el.historyPanel.classList.add('visible');
-        renderSessionList();
+        if (graphViewActive) {
+            renderHistoryGraph();
+        } else {
+            renderSessionList();
+        }
     });
     el.historyClose.addEventListener('click', () => el.historyPanel.classList.remove('visible'));
+
+    el.graphToggleBtn.addEventListener('click', () => {
+        graphViewActive = !graphViewActive;
+        el.sessionList.style.display  = graphViewActive ? 'none'  : '';
+        el.graphView.style.display    = graphViewActive ? 'block' : 'none';
+        el.graphToggleBtn.classList.toggle('active', graphViewActive);
+        el.graphToggleBtn.title = graphViewActive ? 'Show list' : 'Show session graph';
+        if (graphViewActive) renderHistoryGraph();
+    });
 
     el.settingsBtn.addEventListener('click', () => el.settingsPanel.classList.add('visible'));
     el.settingsClose.addEventListener('click', () => el.settingsPanel.classList.remove('visible'));
@@ -728,7 +1071,10 @@
         closeAtDropdown();
         el.msgInput.value = '';
         el.msgInput.style.height = '';
-        vscode.postMessage({ type: 'send', text });
+        const blocks = state.codeContextBlocks.slice();
+        state.codeContextBlocks = [];
+        renderContextChips();
+        vscode.postMessage({ type: 'send', text, codeContextBlocks: blocks });
     }
 
     el.sendBtn.addEventListener('click', sendMessage);
@@ -781,53 +1127,55 @@
 
     function showAtDropdown(files) {
         state.atDropdownItems = files;
-        state.atSelectedIdx = files.length > 0 ? 0 : -1;
-
+        state.atSelectedIdx = -1;
+        el.atDropdown.innerHTML = '';
         if (files.length === 0) { closeAtDropdown(); return; }
-
-        el.atDropdown.innerHTML = files.map((f, i) =>
-            `<div class="at-item${i === 0 ? ' selected' : ''}" data-idx="${i}">${esc(f)}</div>`
-        ).join('');
-
-        el.atDropdown.querySelectorAll('.at-item').forEach(item => {
+        files.forEach((f, i) => {
+            const item = document.createElement('div');
+            item.className = 'at-item';
+            item.textContent = f;
             item.addEventListener('mousedown', (e) => {
                 e.preventDefault();
-                state.atSelectedIdx = parseInt(item.dataset.idx);
-                confirmAtSelection();
+                insertAtCompletion(f);
             });
+            el.atDropdown.appendChild(item);
         });
-
         el.atDropdown.classList.add('visible');
+    }
+
+    function moveAtSelection(dir) {
+        const items = el.atDropdown.querySelectorAll('.at-item');
+        if (!items.length) return;
+        items[state.atSelectedIdx]?.classList.remove('selected');
+        state.atSelectedIdx = Math.max(0, Math.min(items.length - 1, state.atSelectedIdx + dir));
+        items[state.atSelectedIdx]?.classList.add('selected');
+    }
+
+    function confirmAtSelection() {
+        if (state.atSelectedIdx >= 0) {
+            const item = el.atDropdown.querySelectorAll('.at-item')[state.atSelectedIdx];
+            if (item) insertAtCompletion(item.textContent);
+        } else if (state.atDropdownItems.length > 0) {
+            insertAtCompletion(state.atDropdownItems[0]);
+        }
+    }
+
+    function insertAtCompletion(file) {
+        const val    = el.msgInput.value;
+        const cursor = el.msgInput.selectionStart;
+        const before = val.slice(0, state.atCursorStart);
+        const after  = val.slice(cursor);
+        el.msgInput.value = before + '@' + file + ' ' + after;
+        const pos = before.length + file.length + 2;
+        el.msgInput.setSelectionRange(pos, pos);
+        closeAtDropdown();
     }
 
     function closeAtDropdown() {
         el.atDropdown.classList.remove('visible');
+        el.atDropdown.innerHTML = '';
         state.atDropdownItems = [];
         state.atSelectedIdx = -1;
-        state.atCursorStart = -1;
-    }
-
-    function moveAtSelection(delta) {
-        const n = state.atDropdownItems.length;
-        if (n === 0) return;
-        state.atSelectedIdx = (state.atSelectedIdx + delta + n) % n;
-        el.atDropdown.querySelectorAll('.at-item').forEach((item, i) => {
-            item.classList.toggle('selected', i === state.atSelectedIdx);
-        });
-        el.atDropdown.querySelectorAll('.at-item')[state.atSelectedIdx]?.scrollIntoView({ block: 'nearest' });
-    }
-
-    function confirmAtSelection() {
-        if (state.atSelectedIdx < 0 || state.atDropdownItems.length === 0) return;
-        const chosen = state.atDropdownItems[state.atSelectedIdx];
-        const val = el.msgInput.value;
-        const cursor = el.msgInput.selectionStart;
-        const before = val.slice(0, state.atCursorStart);
-        const after  = val.slice(cursor);
-        el.msgInput.value = before + '@' + chosen + ' ' + after;
-        const newCursor = before.length + chosen.length + 2;
-        el.msgInput.setSelectionRange(newCursor, newCursor);
-        closeAtDropdown();
     }
 
     // ── History panel ────────────────────────────────────────────────────────
@@ -859,6 +1207,190 @@
             });
 
             el.sessionList.appendChild(item);
+        }
+    }
+
+    // ── Graph tree ────────────────────────────────────────────────────────────
+
+    function buildGraphTree(sessions) {
+        const byId = new Map(sessions.map(s => [s.id, s]));
+        const children = new Map(sessions.map(s => [s.id, []]));
+        for (const s of sessions) {
+            if (s.parentSessionId && byId.has(s.parentSessionId)) {
+                children.get(s.parentSessionId).push(s.id);
+            }
+        }
+
+        const depth = new Map();
+        const queue = [];
+        for (const s of sessions) {
+            if (!s.parentSessionId || !byId.has(s.parentSessionId)) {
+                queue.push({ id: s.id, d: 0 });
+            }
+        }
+        while (queue.length > 0) {
+            const { id, d } = queue.shift();
+            if (depth.has(id)) continue;
+            depth.set(id, d);
+            for (const cid of (children.get(id) || [])) queue.push({ id: cid, d: d + 1 });
+        }
+        // Assign depth 0 to any remaining (disconnected)
+        for (const s of sessions) { if (!depth.has(s.id)) depth.set(s.id, 0); }
+
+        const layers = [];
+        for (const s of sessions) {
+            const d = depth.get(s.id) || 0;
+            while (layers.length <= d) layers.push([]);
+            layers[d].push(s.id);
+        }
+
+        const NODE_W = 140, NODE_H = 52, H_GAP = 20, V_GAP = 48;
+        const pos = new Map();
+        let maxX = 0;
+        for (let d = 0; d < layers.length; d++) {
+            const ids = layers[d];
+            for (let i = 0; i < ids.length; i++) {
+                const x = i * (NODE_W + H_GAP);
+                const y = d * (NODE_H + V_GAP);
+                pos.set(ids[i], { x, y });
+                maxX = Math.max(maxX, x + NODE_W);
+            }
+        }
+        const totalH = layers.length * (NODE_H + V_GAP);
+        return { pos, children, byId, NODE_W, NODE_H, maxX, totalH };
+    }
+
+    function renderHistoryGraph() {
+        const svg = el.historySvg;
+        svg.innerHTML = '';
+
+        if (state.sessions.length === 0) {
+            const NS = 'http://www.w3.org/2000/svg';
+            const t = document.createElementNS(NS, 'text');
+            t.setAttribute('x', '50%');
+            t.setAttribute('y', '50%');
+            t.setAttribute('text-anchor', 'middle');
+            t.setAttribute('font-size', '12');
+            t.setAttribute('fill', 'var(--vscode-descriptionForeground)');
+            t.textContent = 'No sessions';
+            svg.appendChild(t);
+            return;
+        }
+
+        const { pos, children, byId, NODE_W, NODE_H, maxX, totalH } = buildGraphTree(state.sessions);
+        const PAD = 12;
+        svg.setAttribute('viewBox', `${-PAD} ${-PAD} ${maxX + PAD * 2} ${totalH + PAD * 2}`);
+        svg.setAttribute('width',  String(maxX + PAD * 2));
+        svg.setAttribute('height', String(totalH + PAD * 2));
+        svg.setAttribute('preserveAspectRatio', 'xMidYMin meet');
+
+        const NS = 'http://www.w3.org/2000/svg';
+        const svgEl = (tag, attrs) => {
+            const el = document.createElementNS(NS, tag);
+            for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+            return el;
+        };
+
+        // Draw edges first
+        for (const s of state.sessions) {
+            const pPos = pos.get(s.id);
+            if (!pPos) continue;
+            for (const cid of (children.get(s.id) || [])) {
+                const cPos = pos.get(cid);
+                if (!cPos) continue;
+                const x1 = pPos.x + NODE_W / 2, y1 = pPos.y + NODE_H;
+                const x2 = cPos.x + NODE_W / 2, y2 = cPos.y;
+                const cy = (y1 + y2) / 2;
+                svg.appendChild(svgEl('path', {
+                    d: `M ${x1} ${y1} C ${x1} ${cy}, ${x2} ${cy}, ${x2} ${y2}`,
+                    stroke: 'var(--vscode-widget-border, #555)',
+                    'stroke-width': '1.5',
+                    fill: 'none',
+                    opacity: '0.6'
+                }));
+            }
+        }
+
+        // Draw nodes
+        for (const s of state.sessions) {
+            const p = pos.get(s.id);
+            if (!p) continue;
+            const isCurrent = s.id === state.currentSessionId;
+
+            const g = document.createElementNS(NS, 'g');
+            g.setAttribute('transform', `translate(${p.x},${p.y})`);
+            g.style.cursor = 'pointer';
+
+            const rect = svgEl('rect', {
+                x: '0', y: '0',
+                width: String(NODE_W), height: String(NODE_H),
+                rx: '4', ry: '4',
+                fill: isCurrent
+                    ? 'var(--vscode-button-background)'
+                    : 'var(--vscode-editor-background)',
+                stroke: isCurrent
+                    ? 'var(--vscode-focusBorder, #007acc)'
+                    : 'var(--vscode-widget-border, #555)',
+                'stroke-width': '1'
+            });
+
+            const titleText = (s.title || 'Untitled').slice(0, 20);
+            const tTitle = svgEl('text', {
+                x: '8', y: '18',
+                'font-size': '11',
+                fill: isCurrent ? 'var(--vscode-button-foreground)' : 'var(--vscode-foreground)',
+                'font-family': 'var(--vscode-font-family)',
+                'font-weight': '600'
+            });
+            tTitle.textContent = titleText;
+
+            const date = new Date(s.created).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+            const tDate = svgEl('text', {
+                x: '8', y: '31',
+                'font-size': '9',
+                fill: 'var(--vscode-descriptionForeground)',
+                'font-family': 'var(--vscode-font-family)'
+            });
+            tDate.textContent = date;
+
+            const msgCount = s.messages ? s.messages.length : 0;
+            const tCount = svgEl('text', {
+                x: '8', y: '43',
+                'font-size': '9',
+                fill: 'var(--vscode-descriptionForeground)',
+                'font-family': 'var(--vscode-font-family)'
+            });
+            tCount.textContent = `${msgCount} msg${msgCount !== 1 ? 's' : ''}`;
+
+            g.appendChild(rect);
+            g.appendChild(tTitle);
+            g.appendChild(tDate);
+            g.appendChild(tCount);
+
+            if (s.forkMsgIdx != null) {
+                const forkBadge = svgEl('text', {
+                    x: String(NODE_W - 5), y: '12',
+                    'font-size': '8',
+                    'text-anchor': 'end',
+                    fill: 'var(--vscode-charts-blue, #007acc)',
+                    'font-family': 'var(--vscode-font-family)'
+                });
+                forkBadge.textContent = `fork@${s.forkMsgIdx}`;
+                g.appendChild(forkBadge);
+            }
+
+            g.addEventListener('mouseenter', () => {
+                if (!isCurrent) rect.setAttribute('fill', 'var(--vscode-list-hoverBackground)');
+            });
+            g.addEventListener('mouseleave', () => {
+                if (!isCurrent) rect.setAttribute('fill', 'var(--vscode-editor-background)');
+            });
+            g.addEventListener('click', () => {
+                vscode.postMessage({ type: 'loadSession', id: s.id });
+                el.historyPanel.classList.remove('visible');
+            });
+
+            svg.appendChild(g);
         }
     }
 
@@ -912,8 +1444,11 @@
         const form = document.createElement('div');
         form.className = 'config-edit-form';
         form.innerHTML = `
-<input type="text" class="ef-name" placeholder="Name (e.g. Local)" value="${esc(server.name || '')}">
-<input type="text" class="ef-url" placeholder="URL (e.g. http://localhost:11434/v1)" value="${esc(server.url || '')}">
+<label class="config-form-label">Name</label>
+<input type="text" class="ef-name" placeholder="e.g. Local" value="${esc(server.name || '')}">
+<label class="config-form-label">URL</label>
+<input type="text" class="ef-url" placeholder="e.g. http://localhost:11434/v1" value="${esc(server.url || '')}">
+<label class="config-form-label">API Key</label>
 <input type="password" class="ef-key" placeholder="${esc(keyPlaceholder)}">
 ${keyHint}
 <div class="config-form-actions">
@@ -925,8 +1460,6 @@ ${keyHint}
             const url  = form.querySelector('.ef-url').value.trim();
             if (!name || !url) return;
             const keyValue = form.querySelector('.ef-key').value;
-            // Only include apiKey when the user explicitly typed a value;
-            // empty = keep whatever is already stored in secrets.
             const serverData = { name, url };
             if (keyValue) serverData.apiKey = keyValue;
             onSave(serverData);
@@ -981,25 +1514,25 @@ ${keyHint}
         const adapterOptions = adapters.map(a =>
             `<option value="${a}" ${a === ep.adapter ? 'selected' : ''}>${a}</option>`
         ).join('');
-        const streamingVal = ep.streaming === true ? 'true' : ep.streaming === false ? 'false' : 'default';
 
         const form = document.createElement('div');
         form.className = 'config-edit-form';
         form.innerHTML = `
-<input type="text" class="ef-name" placeholder="Name (e.g. Local OpenAI)" value="${esc(ep.name || '')}">
+<label class="config-form-label">Name</label>
+<input type="text" class="ef-name" placeholder="e.g. Local OpenAI" value="${esc(ep.name || '')}">
+<label class="config-form-label">Server</label>
 <select class="ef-server">${serverOptions || '<option value="">-- no servers --</option>'}</select>
+<label class="config-form-label">Adapter</label>
 <select class="ef-adapter">${adapterOptions}</select>
 <details>
   <summary>Advanced</summary>
   <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">
+    <label class="config-form-label">Model override</label>
     <input type="text" class="ef-model" placeholder="Model override (optional)" value="${esc(ep.model || '')}">
-    <input type="text" class="ef-chat-path" placeholder="Chat path override (e.g. /v1/chat/completions)" value="${esc((ep.pathOverrides || {}).chat || '')}">
-    <input type="text" class="ef-models-path" placeholder="Models path override (e.g. /v1/models)" value="${esc((ep.pathOverrides || {}).models || '')}">
-    <select class="ef-streaming">
-      <option value="default" ${streamingVal === 'default' ? 'selected' : ''}>Streaming: default</option>
-      <option value="true"    ${streamingVal === 'true'    ? 'selected' : ''}>Streaming: on</option>
-      <option value="false"   ${streamingVal === 'false'   ? 'selected' : ''}>Streaming: off</option>
-    </select>
+    <label class="config-form-label">Chat path override</label>
+    <input type="text" class="ef-chat-path" placeholder="e.g. /v1/chat/completions" value="${esc((ep.pathOverrides || {}).chat || '')}">
+    <label class="config-form-label">Models path override</label>
+    <input type="text" class="ef-models-path" placeholder="e.g. /v1/models" value="${esc((ep.pathOverrides || {}).models || '')}">
   </div>
 </details>
 <div class="config-form-actions">
@@ -1011,7 +1544,6 @@ ${keyHint}
             if (!name) return;
             const chatPath   = form.querySelector('.ef-chat-path').value.trim();
             const modelsPath = form.querySelector('.ef-models-path').value.trim();
-            const streamSel  = form.querySelector('.ef-streaming').value;
             const built = {
                 name,
                 server:  form.querySelector('.ef-server').value,
@@ -1024,7 +1556,6 @@ ${keyHint}
                 if (chatPath)   built.pathOverrides.chat   = chatPath;
                 if (modelsPath) built.pathOverrides.models = modelsPath;
             }
-            if (streamSel !== 'default') built.streaming = streamSel === 'true';
             onSave(built);
         });
         form.querySelector('.config-cancel-btn').addEventListener('click', onCancel);
@@ -1144,6 +1675,7 @@ ${keyHint}
 
             case 'init': {
                 state.sessions            = msg.sessions       || [];
+                state.currentSessionId    = msg.session?.id    || '';
                 state.mode                = msg.mode           || 'chat';
                 state.servers             = msg.servers        || [];
                 state.endpoints           = msg.endpoints      || [];
@@ -1167,7 +1699,6 @@ ${keyHint}
                 el.tcModeBtn.textContent = state.toolCallMode === 'api' ? 'TC:API' : 'TC:TXT';
                 el.tcModeBtn.classList.toggle('active', state.toolCallMode === 'api');
 
-                // Auto-show monthly usage bar when endpoint supports it
                 if (state.supportsMonthlyUsage) {
                     _showMonthlyUsageBar('Loading usage…');
                 }
@@ -1234,6 +1765,7 @@ ${keyHint}
 
             case 'newChat': {
                 state.messages = [];
+                state.currentSessionId = '';
                 el.messages.innerHTML = '';
                 setProcessing(false);
                 break;
@@ -1245,6 +1777,7 @@ ${keyHint}
                     role: 'user',
                     raw: msg.text,
                     contextFiles: msg.contextFiles || [],
+                    codeContexts: msg.codeContexts || [],
                     ts: msg.ts || Date.now()
                 };
                 state.messages.push(uMsg);
@@ -1270,9 +1803,12 @@ ${keyHint}
                 if (domEl) {
                     const contentDiv = domEl.querySelector('.md-content');
                     if (contentDiv) {
-                        contentDiv.innerHTML = state.markdownEnabled
-                            ? renderMarkdown(aMsg.raw)
-                            : `<pre>${esc(aMsg.raw)}</pre>`;
+                        if (state.markdownEnabled) {
+                            contentDiv.innerHTML = renderMarkdown(aMsg.raw);
+                            attachCopyListeners(contentDiv);
+                        } else {
+                            contentDiv.innerHTML = `<pre>${esc(aMsg.raw)}</pre>`;
+                        }
                     }
                     scrollBottom();
                 }
@@ -1288,13 +1824,15 @@ ${keyHint}
             }
 
             case 'renderedMarkdown': {
-                // Replace client-rendered markdown with VS Code's built-in server-rendered HTML
                 const aMsg = state.messages.find(m => m.id === msg.id);
                 if (aMsg) aMsg.renderedHtml = msg.html;
                 const domEl = el.messages.querySelector(`[data-id="${CSS.escape(msg.id)}"]`);
                 if (domEl && state.markdownEnabled) {
                     const contentDiv = domEl.querySelector('.md-content');
-                    if (contentDiv) contentDiv.innerHTML = msg.html;
+                    if (contentDiv) {
+                        contentDiv.innerHTML = msg.html;
+                        addCopyBtnsToPreElements(contentDiv);
+                    }
                 }
                 break;
             }
@@ -1307,7 +1845,6 @@ ${keyHint}
             }
 
             case 'monthlyUsage': {
-                // Always show the bar when data arrives
                 el.monthlyUsageBar.style.display = 'flex';
                 if (msg.error) {
                     el.monthlyUsageDisplay.textContent = '⚠ ' + msg.error;
@@ -1323,11 +1860,9 @@ ${keyHint}
                 const card = createApprovalCard(msg);
                 const domEl = el.messages.querySelector(`[data-id="${CSS.escape(msg.msgId)}"]`);
                 if (domEl) {
-                    // Insert before the msg-footer so it appears above timestamp
                     const footer = domEl.querySelector('.msg-footer');
                     footer ? domEl.insertBefore(card, footer) : domEl.appendChild(card);
                 } else {
-                    // Fallback: message bubble not found, append directly to messages
                     el.messages.appendChild(card);
                 }
                 scrollBottom();
@@ -1335,9 +1870,6 @@ ${keyHint}
             }
 
             case 'toolDenied': {
-                // If the user already clicked Deny on the card, the card is already styled denied.
-                // This handles the case where the denial came from a config-level 'deny' (no card shown)
-                // or from a Stop action clearing approvals.
                 const card = el.messages.querySelector(
                     `.tool-approval-card[data-callid="${CSS.escape(msg.call.id)}"]`
                 );
@@ -1372,7 +1904,6 @@ ${keyHint}
                 const domEl = el.messages.querySelector(`[data-id="${CSS.escape(msg.msgId)}"]`);
                 if (domEl) {
                     const block = createToolBlock(call);
-                    // Replace pending approval card if present, otherwise append
                     const pendingCard = domEl.querySelector(`.tool-approval-card[data-callid="${CSS.escape(msg.call.id)}"]`);
                     if (pendingCard) {
                         pendingCard.replaceWith(block);
@@ -1388,61 +1919,33 @@ ${keyHint}
             case 'toolEnd': {
                 for (const m of state.messages) {
                     const tc = m.toolCalls?.find(t => t.id === msg.call.id);
-                    if (tc) {
-                        Object.assign(tc, msg.call, { done: true });
-                        break;
-                    }
+                    if (tc) { Object.assign(tc, msg.call, { done: true }); break; }
                 }
 
                 const block = el.messages.querySelector(`.tool-block[data-tcid="${CSS.escape(msg.call.id)}"]`);
                 if (block) {
                     const hasError = !!msg.call.result?.error;
-                    const stateIcon = hasError ? '✕' : '✓';
-                    const stateText = hasError ? 'error' : 'done';
                     const header = block.querySelector('.tool-header');
                     if (header) {
-                        header.querySelector('.tool-spinner')?.replaceWith(document.createTextNode(stateIcon));
+                        const spinnerParent = header.querySelector('.tool-state-icon');
+                        if (spinnerParent) spinnerParent.textContent = hasError ? '✕' : '✓';
                         const st = header.querySelector('.tool-state');
-                        if (st) st.textContent = stateText;
+                        if (st) st.textContent = hasError ? 'error' : 'done';
 
-                        // View button — opens args + result in a VS Code editor panel
                         if (!header.querySelector('.tool-view-btn')) {
                             const viewBtn = document.createElement('button');
                             viewBtn.className = 'tool-view-btn';
-                            viewBtn.title = 'Open args & result in editor';
+                            viewBtn.title = 'Open full JSON in editor';
                             viewBtn.textContent = '⊡';
                             viewBtn.addEventListener('click', (e) => {
                                 e.stopPropagation();
                                 _openToolPreview(msg.call.name, msg.call.args, msg.call.result);
                             });
-                            // Insert before diff button if present, otherwise before state span
-                            const diffBtn = header.querySelector('.tool-diff-btn');
-                            header.insertBefore(viewBtn, diffBtn || null);
-                        }
-
-                        // Diff button for successful write/edit operations
-                        const name = msg.call.name;
-                        const argPath = msg.call.args?.path;
-                        if (!hasError &&
-                            (name === 'write_file' || name === 'edit_file') &&
-                            argPath && !header.querySelector('.tool-diff-btn')) {
-                            const diffBtn = document.createElement('button');
-                            diffBtn.className = 'tool-diff-btn';
-                            diffBtn.title = 'View git diff';
-                            diffBtn.textContent = '⊕ Diff';
-                            diffBtn.addEventListener('click', (e) => {
-                                e.stopPropagation();
-                                vscode.postMessage({ type: 'showDiff', path: argPath });
-                            });
-                            header.appendChild(diffBtn);
+                            header.appendChild(viewBtn);
                         }
                     }
                     const body = block.querySelector('.tool-body');
-                    if (body) {
-                        const args = msg.call.args ? JSON.stringify(msg.call.args, null, 2) : '';
-                        const result = msg.call.result ? JSON.stringify(msg.call.result, null, 2) : '';
-                        body.innerHTML = `<b>args:</b>\n${esc(args)}\n\n<b>result:</b>\n${esc(result)}`;
-                    }
+                    if (body) _buildToolBody(body, { ...msg.call, done: true });
                     scrollBottom();
                 }
                 break;
@@ -1474,6 +1977,7 @@ ${keyHint}
 
             case 'forkReady': {
                 state.messages = [];
+                state.currentSessionId = msg.session?.id || '';
                 el.messages.innerHTML = '';
                 setProcessing(false);
                 if (msg.session && msg.session.messages.length > 0) {
@@ -1485,12 +1989,19 @@ ${keyHint}
 
             case 'sessions': {
                 state.sessions = msg.sessions || [];
-                if (el.historyPanel.classList.contains('visible')) renderSessionList();
+                if (el.historyPanel.classList.contains('visible')) {
+                    if (graphViewActive) {
+                        renderHistoryGraph();
+                    } else {
+                        renderSessionList();
+                    }
+                }
                 break;
             }
 
             case 'loadSession': {
                 state.messages = [];
+                state.currentSessionId = msg.session?.id || '';
                 el.messages.innerHTML = '';
                 setProcessing(false);
                 _loadMessages(msg.session.messages);
@@ -1499,6 +2010,22 @@ ${keyHint}
 
             case 'fileSuggestions': {
                 showAtDropdown(msg.files || []);
+                break;
+            }
+
+            case 'addCodeContext': {
+                const block = {
+                    id:        `ctx_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                    code:      msg.code      || '',
+                    file:      msg.file      || 'unknown',
+                    startLine: msg.startLine || 1,
+                    endLine:   msg.endLine   || 1
+                };
+                state.codeContextBlocks.push(block);
+                renderContextChips();
+                // Brief flash to confirm capture
+                el.contextChips.classList.add('ctx-flash');
+                setTimeout(() => el.contextChips.classList.remove('ctx-flash'), 400);
                 break;
             }
         }
@@ -1528,13 +2055,16 @@ ${keyHint}
                     pending: false
                 };
                 state.messages.push(dm);
-                el.messages.appendChild(createAssistantEl(dm));
+                const domEl = createAssistantEl(dm);
+                if (state.usageByMsgId[dm.id]) _applyUsageBadge(domEl, state.usageByMsgId[dm.id].usage);
+                el.messages.appendChild(domEl);
             }
         }
         scrollBottom();
     }
 
     // ── Boot ─────────────────────────────────────────────────────────────────
+    renderContextChips();
     vscode.postMessage({ type: 'ready' });
 
 })();

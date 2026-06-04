@@ -19,36 +19,36 @@ body {
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 6px;
+    padding: 5px 8px;
     border-bottom: 1px solid var(--vscode-widget-border, #333);
     flex-shrink: 0;
     flex-wrap: nowrap;
-    min-height: 32px;
+    min-height: 36px;
 }
 
 #toolbar select,
 #toolbar button.icon-btn {
-    height: 22px;
+    height: 26px;
     border: 1px solid var(--vscode-input-border, #555);
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border-radius: 2px;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 13px;
 }
 
 #toolbar select { padding: 0 4px; flex-shrink: 0; }
-#mode-select    { width: 68px; }
-#endpoint-select{ width: 80px; }
+#mode-select    { width: 76px; }
+#endpoint-select{ width: 88px; }
 #model-select   { flex: 1; min-width: 60px; }
 
 button.icon-btn {
-    width: 22px;
+    width: 26px;
     padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
+    font-size: 15px;
     background: transparent;
     border: 1px solid transparent;
     flex-shrink: 0;
@@ -56,7 +56,7 @@ button.icon-btn {
 button.icon-btn:hover { background: var(--vscode-toolbar-hoverBackground); border-color: var(--vscode-widget-border); }
 button.icon-btn.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 
-#refresh-models-btn { font-size: 12px; }
+#refresh-models-btn { font-size: 14px; }
 
 /* ── Main content area ─────────────────────────────────────────────────────── */
 #main {
@@ -86,9 +86,9 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     max-width: 100%;
     word-break: break-word;
     line-height: 1.5;
-    font-size: 13px;
+    font-size: 14px;
     border-radius: 4px;
-    padding: 7px 10px;
+    padding: 8px 11px;
 }
 
 .msg-user {
@@ -101,7 +101,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 
 .msg-user .ctx-files {
     margin-top: 4px;
-    font-size: 10px;
+    font-size: 11px;
     opacity: 0.75;
 }
 
@@ -125,8 +125,8 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     border: 1px solid var(--vscode-inputValidation-errorBorder, #a33);
     color: var(--vscode-errorForeground, #f44);
     width: 100%;
-    font-size: 12px;
-    padding: 6px 8px;
+    font-size: 13px;
+    padding: 7px 9px;
     border-radius: 3px;
 }
 
@@ -135,7 +135,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     margin-top: 6px;
     border: 1px solid var(--vscode-widget-border, #444);
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 13px;
     overflow: hidden;
 }
 
@@ -143,7 +143,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px;
+    padding: 5px 8px;
     background: var(--vscode-titleBar-activeBackground, rgba(100,100,100,0.15));
     cursor: pointer;
     user-select: none;
@@ -151,10 +151,10 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 
 .tool-header:hover { background: var(--vscode-toolbar-hoverBackground); }
 
-.tool-name  { font-weight: 600; font-family: var(--vscode-editor-font-family, monospace); }
-.tool-summary { font-size: 10px; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
-.tool-state { font-size: 10px; opacity: 0.7; margin-left: auto; }
-.tool-toggle-icon { font-size: 10px; opacity: 0.5; flex-shrink: 0; transition: transform 0.1s; }
+.tool-name  { font-weight: 600; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+.tool-summary { font-size: 11px; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.tool-state { font-size: 11px; opacity: 0.7; margin-left: auto; }
+.tool-toggle-icon { font-size: 11px; opacity: 0.5; flex-shrink: 0; transition: transform 0.1s; }
 .tool-block.open .tool-toggle-icon { transform: rotate(90deg); }
 
 .tool-view-btn, .tool-diff-btn {
@@ -164,8 +164,8 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     border-radius: 3px;
     color: var(--vscode-descriptionForeground);
     cursor: pointer;
-    font-size: 10px;
-    padding: 1px 5px;
+    font-size: 11px;
+    padding: 2px 6px;
 }
 .tool-view-btn:hover, .tool-diff-btn:hover {
     background: var(--vscode-toolbar-hoverBackground);
@@ -174,19 +174,197 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 
 .tool-body {
     display: none;
-    padding: 6px 8px;
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 11px;
     background: var(--vscode-textBlockQuote-background, rgba(0,0,0,0.1));
-    white-space: pre-wrap;
-    word-break: break-all;
-    max-height: 200px;
-    overflow-y: auto;
 }
 
 .tool-block.open .tool-body { display: block; }
 .tool-spinner { animation: spin 1s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Running state placeholder */
+.tool-body-running {
+    padding: 6px 8px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 120px;
+    overflow-y: auto;
+    color: var(--vscode-descriptionForeground);
+}
+
+/* Tab bar */
+.tool-tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--vscode-widget-border, #444);
+    background: var(--vscode-editorGroupHeader-tabsBackground, rgba(0,0,0,0.08));
+}
+
+.tool-tab {
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    border-bottom: 2px solid transparent;
+    transition: color 0.1s, border-color 0.1s;
+}
+
+.tool-tab:hover { color: var(--vscode-foreground); }
+.tool-tab.active {
+    color: var(--vscode-foreground);
+    border-bottom-color: var(--vscode-focusBorder, #007acc);
+    background: var(--vscode-textBlockQuote-background, rgba(0,0,0,0.1));
+}
+
+/* Formatted / Raw panels */
+.tool-panel-formatted,
+.tool-panel-raw {
+    display: none;
+    padding: 6px 8px;
+    font-size: 12px;
+    overflow-y: auto;
+    max-height: 320px;
+}
+
+.tool-panel-formatted.active,
+.tool-panel-raw.active { display: block; }
+
+/* Section within a formatted panel */
+.tool-section { margin-bottom: 8px; }
+.tool-section:last-child { margin-bottom: 0; }
+
+.tool-section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 3px;
+    opacity: 0.8;
+}
+
+.tool-section-content {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Two-column args/result layout */
+.tool-two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+/* File path header */
+.tool-file-path {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    background: rgba(128,128,128,0.12);
+    border-radius: 2px;
+    padding: 2px 6px;
+    margin-bottom: 4px;
+    word-break: break-all;
+}
+
+/* Line-numbered content (read_file) */
+.tool-lined-content {
+    display: flex;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 2px;
+    overflow: auto;
+    max-height: 240px;
+}
+
+.tool-line-nums {
+    padding: 4px 6px;
+    background: rgba(128,128,128,0.08);
+    text-align: right;
+    color: var(--vscode-editorLineNumber-foreground, rgba(128,128,128,0.5));
+    user-select: none;
+    min-width: 36px;
+    flex-shrink: 0;
+    white-space: pre;
+    border-right: 1px solid var(--vscode-widget-border, #444);
+}
+
+.tool-line-code {
+    padding: 4px 8px;
+    white-space: pre;
+    overflow-x: auto;
+    flex: 1;
+}
+
+/* Diff preview (edit_file / write_file) */
+.tool-diff-preview {
+    border: 1px solid var(--vscode-widget-border, #444);
+    border-radius: 2px;
+    overflow: hidden;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+}
+
+.tool-diff-label {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
+    background: rgba(128,128,128,0.12);
+    color: var(--vscode-descriptionForeground);
+    border-bottom: 1px solid var(--vscode-widget-border, #444);
+}
+
+.tool-diff-old {
+    background: rgba(200, 0, 0, 0.06);
+    padding: 4px 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 120px;
+    overflow-y: auto;
+    border-bottom: 1px solid var(--vscode-widget-border, #444);
+}
+
+.tool-diff-new {
+    background: rgba(0, 180, 0, 0.06);
+    padding: 4px 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.tool-open-diff-btn {
+    display: block;
+    margin-top: 6px;
+    padding: 3px 10px;
+    font-size: 12px;
+    background: transparent;
+    color: var(--vscode-textLink-foreground);
+    border: 1px solid var(--vscode-widget-border, #555);
+    border-radius: 2px;
+    cursor: pointer;
+}
+.tool-open-diff-btn:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+
+/* Raw panel copy button */
+.tool-raw-copy-btn {
+    display: block;
+    margin-bottom: 4px;
+    margin-left: auto;
+    padding: 2px 8px;
+    font-size: 11px;
+    background: var(--vscode-button-secondaryBackground, rgba(128,128,128,0.2));
+    color: var(--vscode-button-secondaryForeground, inherit);
+    border: 1px solid var(--vscode-widget-border, #555);
+    border-radius: 2px;
+    cursor: pointer;
+}
+.tool-raw-copy-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 
 /* ── Markdown content ──────────────────────────────────────────────────────── */
 .md-content p          { margin: 0.4em 0; }
@@ -211,12 +389,12 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .md-content pre code {
     background: transparent;
     padding: 0;
-    font-size: 12px;
+    font-size: 13px;
     font-family: var(--vscode-editor-font-family, monospace);
 }
 .md-content code {
     font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 12px;
+    font-size: 13px;
     background: rgba(128,128,128,0.15);
     padding: 1px 4px;
     border-radius: 3px;
@@ -231,7 +409,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 }
 .md-content a { color: var(--vscode-textLink-foreground); }
 .md-content hr { border: none; border-top: 1px solid var(--vscode-widget-border, #444); margin: 8px 0; }
-.md-content table { border-collapse: collapse; font-size: 12px; margin: 6px 0; width: 100%; }
+.md-content table { border-collapse: collapse; font-size: 13px; margin: 6px 0; width: 100%; }
 .md-content th, .md-content td {
     border: 1px solid var(--vscode-widget-border, #444);
     padding: 3px 6px;
@@ -242,8 +420,8 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .copy-btn {
     position: absolute;
     top: 4px; right: 4px;
-    font-size: 10px;
-    padding: 2px 6px;
+    font-size: 11px;
+    padding: 2px 7px;
     background: var(--vscode-button-secondaryBackground, rgba(128,128,128,0.2));
     color: var(--vscode-button-secondaryForeground, inherit);
     border: 1px solid var(--vscode-widget-border, #555);
@@ -260,8 +438,8 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     align-items: center;
     gap: 6px;
     padding: 2px 8px;
-    min-height: 20px;
-    font-size: 11px;
+    min-height: 22px;
+    font-size: 12px;
     color: var(--vscode-descriptionForeground);
     border-top: 1px solid var(--vscode-widget-border, #333);
     flex-shrink: 0;
@@ -271,9 +449,9 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 
 #stop-btn {
     display: none;
-    padding: 1px 8px;
-    font-size: 11px;
-    height: 18px;
+    padding: 1px 10px;
+    font-size: 12px;
+    height: 20px;
     background: var(--vscode-statusBarItem-errorBackground, #a33);
     color: #fff;
     border: none;
@@ -298,14 +476,14 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 
 #msg-input {
     flex: 1;
-    min-height: 38px;
+    min-height: 44px;
     max-height: 160px;
     resize: none;
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, #555);
     border-radius: 3px;
-    padding: 6px 8px;
+    padding: 7px 9px;
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
     line-height: 1.4;
@@ -316,14 +494,14 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 #msg-input:disabled { opacity: 0.5; }
 
 #send-btn {
-    height: 38px;
-    padding: 0 12px;
+    height: 44px;
+    padding: 0 14px;
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     border: none;
     border-radius: 3px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 15px;
     flex-shrink: 0;
 }
 #send-btn:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
@@ -332,13 +510,13 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 #input-toggles {
     display: flex;
     gap: 6px;
-    margin-top: 4px;
+    margin-top: 5px;
     align-items: center;
 }
 
 .toggle-btn {
-    font-size: 10px;
-    padding: 1px 6px;
+    font-size: 12px;
+    padding: 2px 8px;
     background: transparent;
     color: var(--vscode-descriptionForeground);
     border: 1px solid var(--vscode-widget-border, #555);
@@ -348,6 +526,80 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 }
 .toggle-btn:hover  { background: var(--vscode-toolbar-hoverBackground); }
 .toggle-btn.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: var(--vscode-button-background); }
+
+/* ── Context chips ─────────────────────────────────────────────────────────── */
+#context-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 5px;
+}
+#context-chips:empty { display: none; }
+
+.ctx-chip {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--vscode-focusBorder, #007acc);
+    border-radius: 3px;
+    background: rgba(0, 122, 204, 0.07);
+    font-size: 11px;
+    overflow: hidden;
+    max-width: 100%;
+}
+
+.ctx-chip-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 5px;
+}
+
+.ctx-chip-icon { opacity: 0.75; flex-shrink: 0; }
+
+.ctx-chip-label {
+    font-family: var(--vscode-editor-font-family, monospace);
+    color: var(--vscode-descriptionForeground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.ctx-chip-toggle,
+.ctx-chip-remove {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 11px;
+    line-height: 1;
+}
+.ctx-chip-toggle:hover { color: var(--vscode-foreground); }
+.ctx-chip-remove:hover { color: var(--vscode-errorForeground, #f66); }
+
+.ctx-chip-preview {
+    display: none;
+    padding: 4px 6px;
+    border-top: 1px solid var(--vscode-widget-border, #444);
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    white-space: pre;
+    overflow-x: auto;
+    max-height: 120px;
+    overflow-y: auto;
+    background: var(--vscode-textBlockQuote-background, rgba(0,0,0,0.12));
+    color: var(--vscode-foreground);
+}
+.ctx-chip-preview.open { display: block; }
+
+@keyframes ctx-flash {
+    0%   { box-shadow: 0 0 0 2px var(--vscode-focusBorder, #007acc); }
+    100% { box-shadow: none; }
+}
+.ctx-flash { animation: ctx-flash 0.6s ease-out; }
 
 /* ── @ autocomplete dropdown ───────────────────────────────────────────────── */
 #at-dropdown {
@@ -367,8 +619,8 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 #at-dropdown.visible { display: block; }
 
 .at-item {
-    padding: 4px 8px;
-    font-size: 12px;
+    padding: 5px 9px;
+    font-size: 13px;
     font-family: var(--vscode-editor-font-family, monospace);
     cursor: pointer;
     white-space: nowrap;
@@ -394,9 +646,9 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .panel-header {
     display: flex;
     align-items: center;
-    padding: 6px 8px;
+    padding: 7px 9px;
     border-bottom: 1px solid var(--vscode-widget-border, #333);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     gap: 6px;
 }
@@ -406,7 +658,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     border: none;
     color: var(--vscode-foreground);
     cursor: pointer;
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1;
     padding: 2px 4px;
 }
@@ -421,21 +673,21 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .session-item {
     display: flex;
     align-items: center;
-    padding: 6px 10px;
+    padding: 7px 11px;
     cursor: pointer;
     gap: 6px;
     border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.15));
 }
 .session-item:hover { background: var(--vscode-list-hoverBackground); }
 
-.session-title { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-date  { font-size: 10px; color: var(--vscode-descriptionForeground); flex-shrink: 0; }
+.session-title { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-date  { font-size: 11px; color: var(--vscode-descriptionForeground); flex-shrink: 0; }
 .session-del {
     background: transparent;
     border: none;
     color: var(--vscode-descriptionForeground);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 14px;
     padding: 0 2px;
     line-height: 1;
     flex-shrink: 0;
@@ -443,7 +695,20 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 }
 .session-item:hover .session-del { opacity: 1; }
 .session-del:hover { color: var(--vscode-errorForeground, #f66); }
-.no-sessions { padding: 20px; text-align: center; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.no-sessions { padding: 20px; text-align: center; color: var(--vscode-descriptionForeground); font-size: 13px; }
+
+/* Graph view */
+#graph-view {
+    flex: 1;
+    overflow: auto;
+    background: var(--vscode-editor-background);
+}
+
+#graph-toggle-btn {
+    font-size: 16px;
+    width: 24px;
+    height: 24px;
+}
 
 /* ── Settings panel ────────────────────────────────────────────────────────── */
 #settings-panel {
@@ -458,14 +723,14 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 #settings-panel.visible { display: flex; }
 
 .settings-body {
-    padding: 8px 10px;
+    padding: 9px 11px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 13px;
 }
 
 .settings-group { display: flex; flex-direction: column; gap: 4px; }
-.settings-group label { font-size: 11px; color: var(--vscode-descriptionForeground); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.settings-group label { font-size: 12px; color: var(--vscode-descriptionForeground); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 
 .settings-group input[type="text"],
 .settings-group input[type="number"],
@@ -474,20 +739,20 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, #555);
     border-radius: 2px;
-    padding: 4px 6px;
-    font-size: 12px;
+    padding: 5px 7px;
+    font-size: 13px;
     width: 100%;
 }
-.settings-group textarea { resize: vertical; min-height: 60px; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
+.settings-group textarea { resize: vertical; min-height: 60px; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
 .settings-group input:focus, .settings-group textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
 
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.settings-row span { font-size: 12px; }
+.settings-row span { font-size: 13px; }
 
 .toggle-switch {
     position: relative;
-    width: 30px;
-    height: 16px;
+    width: 32px;
+    height: 18px;
     flex-shrink: 0;
 }
 .toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
@@ -495,7 +760,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     position: absolute;
     inset: 0;
     background: var(--vscode-input-border, #555);
-    border-radius: 8px;
+    border-radius: 9px;
     cursor: pointer;
     transition: background 0.15s;
 }
@@ -503,7 +768,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .toggle-track::after {
     content: '';
     position: absolute;
-    top: 2px; left: 2px;
+    top: 3px; left: 3px;
     width: 12px; height: 12px;
     background: #fff;
     border-radius: 50%;
@@ -512,8 +777,8 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .toggle-switch input:checked + .toggle-track::after { transform: translateX(14px); }
 
 /* Tool permissions table */
-.perm-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.perm-table th, .perm-table td { padding: 3px 6px; border: 1px solid var(--vscode-widget-border, #444); }
+.perm-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.perm-table th, .perm-table td { padding: 4px 7px; border: 1px solid var(--vscode-widget-border, #444); }
 .perm-table th { background: rgba(128,128,128,0.12); font-weight: 600; }
 .perm-table select {
     background: var(--vscode-input-background);
@@ -521,18 +786,18 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     border: 1px solid var(--vscode-input-border, #555);
     border-radius: 2px;
     padding: 1px 2px;
-    font-size: 11px;
+    font-size: 12px;
     width: 100%;
 }
 
 .settings-footer {
-    padding: 8px 10px;
+    padding: 9px 11px;
     border-top: 1px solid var(--vscode-widget-border, #333);
 }
 .open-settings-btn {
     width: 100%;
-    padding: 4px;
-    font-size: 11px;
+    padding: 5px;
+    font-size: 12px;
     background: transparent;
     color: var(--vscode-textLink-foreground);
     border: 1px solid var(--vscode-widget-border, #555);
@@ -545,28 +810,28 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .config-section-header { display: flex; align-items: center; justify-content: space-between; }
 
 .link-btn {
-    font-size: 11px; background: transparent; border: none;
+    font-size: 12px; background: transparent; border: none;
     color: var(--vscode-textLink-foreground); cursor: pointer; padding: 0;
 }
 .link-btn:hover { text-decoration: underline; }
 
 .config-item {
     display: flex; align-items: center; gap: 6px;
-    padding: 4px 0;
+    padding: 5px 0;
     border-bottom: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.2));
-    font-size: 12px;
+    font-size: 13px;
 }
 .config-item-name {
     font-weight: 600; white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; max-width: 80px; flex-shrink: 0;
+    text-overflow: ellipsis; max-width: 90px; flex-shrink: 0;
 }
 .config-item-detail {
-    flex: 1; color: var(--vscode-descriptionForeground); font-size: 11px;
+    flex: 1; color: var(--vscode-descriptionForeground); font-size: 12px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .config-edit-btn, .config-del-btn {
     flex-shrink: 0; background: transparent; border: none;
-    color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 12px;
+    color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 13px;
     padding: 1px 3px; opacity: 0; border-radius: 2px;
 }
 .config-item:hover .config-edit-btn,
@@ -585,28 +850,38 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border, #555);
-    border-radius: 2px; padding: 3px 5px; font-size: 11px; width: 100%;
+    border-radius: 2px; padding: 4px 6px; font-size: 12px; width: 100%;
 }
 .config-edit-form input:focus, .config-edit-form select:focus {
     outline: 1px solid var(--vscode-focusBorder);
 }
 .config-edit-form details { margin-top: 2px; }
 .config-edit-form summary {
-    font-size: 11px; color: var(--vscode-descriptionForeground); cursor: pointer;
+    font-size: 12px; color: var(--vscode-descriptionForeground); cursor: pointer;
 }
 .config-form-actions { display: flex; gap: 6px; margin-top: 2px; }
 .config-save-btn {
-    padding: 2px 10px; font-size: 11px;
+    padding: 3px 12px; font-size: 12px;
     background: var(--vscode-button-background); color: var(--vscode-button-foreground);
     border: none; border-radius: 2px; cursor: pointer;
 }
 .config-save-btn:hover { background: var(--vscode-button-hoverBackground); }
 .config-cancel-btn {
-    padding: 2px 10px; font-size: 11px;
+    padding: 3px 12px; font-size: 12px;
     background: transparent; color: var(--vscode-foreground);
     border: 1px solid var(--vscode-widget-border, #555); border-radius: 2px; cursor: pointer;
 }
 .config-cancel-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+
+/* Labels within inline edit forms */
+.config-form-label {
+    display: block;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    font-weight: 600;
+    margin-top: 2px;
+    margin-bottom: 1px;
+}
 
 /* ── Message footer (timestamp + action buttons) ───────────────────────────── */
 .msg-footer {
@@ -623,8 +898,8 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 }
 
 .msg-action-btn {
-    font-size: 11px;
-    padding: 1px 5px;
+    font-size: 12px;
+    padding: 2px 6px;
     background: transparent;
     color: var(--vscode-descriptionForeground);
     border: 1px solid transparent;
@@ -641,8 +916,8 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .retry-btn {
     display: block;
     margin-top: 5px;
-    padding: 2px 10px;
-    font-size: 11px;
+    padding: 3px 12px;
+    font-size: 12px;
     background: transparent;
     color: var(--vscode-foreground);
     border: 1px solid var(--vscode-widget-border, #555);
@@ -661,25 +936,17 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     flex-direction: column;
     gap: 1px;
 }
-.usage-line {
-    display: block;
-}
-.usage-tokens {
-    color: var(--vscode-descriptionForeground);
-    opacity: 0.55;
-}
-.usage-cost {
-    color: var(--vscode-charts-green, #4ec9b0);
-    opacity: 0.75;
-}
+.usage-line { display: block; }
+.usage-tokens { color: var(--vscode-descriptionForeground); opacity: 0.55; }
+.usage-cost   { color: var(--vscode-charts-green, #4ec9b0); opacity: 0.75; }
 
 /* ── Monthly usage bar ──────────────────────────────────────────────────────── */
 #monthly-usage-bar {
     display: none;
     align-items: center;
     gap: 6px;
-    padding: 2px 8px;
-    font-size: 11px;
+    padding: 3px 9px;
+    font-size: 12px;
     color: var(--vscode-descriptionForeground);
     background: var(--vscode-editorWidget-background, rgba(128,128,128,0.08));
     border-bottom: 1px solid var(--vscode-widget-border, #333);
@@ -692,7 +959,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     margin-top: 6px;
     border: 1px solid var(--vscode-focusBorder, #007acc);
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 12px;
     overflow: hidden;
     background: rgba(0, 122, 204, 0.05);
 }
@@ -707,7 +974,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     display: flex;
     align-items: center;
     gap: 5px;
-    padding: 4px 8px;
+    padding: 5px 9px;
     background: rgba(0, 122, 204, 0.08);
 }
 
@@ -716,11 +983,11 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 }
 
 .tap-icon {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
     color: var(--vscode-focusBorder, #007acc);
     flex-shrink: 0;
-    width: 14px;
+    width: 15px;
     text-align: center;
 }
 
@@ -737,12 +1004,12 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 10px;
+    font-size: 11px;
     min-width: 0;
 }
 
 .tool-approval-status {
-    font-size: 10px;
+    font-size: 11px;
     opacity: 0.6;
     white-space: nowrap;
     flex-shrink: 0;
@@ -755,8 +1022,8 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
     border: none;
     color: var(--vscode-descriptionForeground);
     cursor: pointer;
-    font-size: 11px;
-    padding: 1px 4px;
+    font-size: 12px;
+    padding: 2px 5px;
     border-radius: 2px;
     line-height: 1.4;
 }
@@ -767,7 +1034,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 }
 
 .tool-approval-body {
-    padding: 6px 8px;
+    padding: 7px 9px;
     background: var(--vscode-textBlockQuote-background, rgba(0,0,0,0.1));
     border-top: 1px solid var(--vscode-widget-border, #444);
 }
@@ -775,7 +1042,7 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .tap-pre {
     margin: 0;
     font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 11px;
+    font-size: 12px;
     white-space: pre-wrap;
     word-break: break-all;
     max-height: 180px;
@@ -786,14 +1053,14 @@ button.icon-btn.active { background: var(--vscode-button-background); color: var
 .tool-approval-actions {
     display: flex;
     gap: 5px;
-    padding: 5px 8px;
+    padding: 6px 9px;
     border-top: 1px solid rgba(0, 122, 204, 0.2);
     background: rgba(0, 122, 204, 0.04);
 }
 
 .tap-allow-once, .tap-allow-always, .tap-deny {
-    padding: 2px 9px;
-    font-size: 11px;
+    padding: 3px 10px;
+    font-size: 12px;
     border-radius: 2px;
     cursor: pointer;
     border: 1px solid var(--vscode-widget-border, #555);

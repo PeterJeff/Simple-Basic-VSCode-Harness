@@ -23,6 +23,7 @@ Guidelines:
 - Use get_symbols to understand a file's structure before editing it.
 - Use edit_file for targeted changes to existing files (replacing a specific function, fixing a line, etc.). Use write_file only for new files or complete rewrites.
 - When using write_file, write the complete file content — do not use placeholders.
+- Before each tool call, write one sentence explaining what you are about to do and why. Keep it brief and action-oriented.
 - When you have completed the task, provide a clear summary of everything you did.
 - If something is unclear or risky, ask the user before proceeding.`
 };

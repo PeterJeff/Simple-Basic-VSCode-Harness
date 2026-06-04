@@ -48,6 +48,18 @@
         "title": "Show Output Logs",
         "category": "Standalone Agent",
         "icon": "$(output)"
+      },
+      {
+        "command": "standalone-agent.addSelectionToContext",
+        "title": "Add Selection to Chat Context",
+        "category": "Standalone Agent"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "standalone-agent.addSelectionToContext",
+        "key": "ctrl+shift+l",
+        "when": "editorHasSelection"
       }
     ],
     "menus": {
@@ -97,7 +109,7 @@
         "standaloneAgent.endpoints": {
           "type": "array",
           "order": 3,
-          "markdownDescription": "Logical endpoints — each combines a server with an adapter type and optional overrides.\n\n**Adapters:** `openai`, `gemini-jank`, `gemini`, `ask-sage`\n\nFor Ask Sage's OpenAI sub-API: use `adapter: \"openai\"` with `pathOverrides`.\n\nPer-endpoint `streaming` overrides the global toggle. `model` overrides the sidebar model selector.\n\n**Ask Sage `adapterOptions`:** `persona`, `dataset`, `live`, `limitReferences`, `system_prompt`, `reasoningEffort`",
+          "markdownDescription": "Logical endpoints — each combines a server with an adapter type and optional overrides.\n\n**Adapters:** `openai`, `gemini-jank`, `gemini`, `ask-sage`\n\nFor Ask Sage's OpenAI sub-API: use `adapter: \"openai\"` with `pathOverrides`.\n\n`model` overrides the sidebar model selector.\n\n**Ask Sage `adapterOptions`:** `persona`, `dataset`, `live`, `limitReferences`, `system_prompt`, `reasoningEffort`",
           "default": [
             {
               "name": "Local OpenAI",
@@ -115,10 +127,6 @@
                 "type": "string",
                 "enum": ["openai", "gemini-jank", "gemini", "ask-sage"],
                 "description": "Protocol adapter to use for this endpoint"
-              },
-              "streaming": {
-                "type": "boolean",
-                "description": "Per-endpoint streaming override. Omit to use the global streaming setting."
               },
               "model": {
                 "type": "string",

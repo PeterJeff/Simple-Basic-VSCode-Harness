@@ -42,6 +42,21 @@ function activate(context) {
 
         vscode.commands.registerCommand('standalone-agent.showLogs', () => {
             logger.show();
+        }),
+
+        vscode.commands.registerCommand('standalone-agent.addSelectionToContext', () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || editor.selection.isEmpty) return;
+            const sel = editor.selection;
+            const code = editor.document.getText(sel);
+            const file = vscode.workspace.asRelativePath(editor.document.uri);
+            provider.sendToWebview({
+                type: 'addCodeContext',
+                code,
+                file,
+                startLine: sel.start.line + 1,
+                endLine:   sel.end.line + 1
+            });
         })
     );
 

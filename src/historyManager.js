@@ -30,12 +30,14 @@ class HistoryManager {
         return this._ctx.globalState.update('sa_sessions', []);
     }
 
-    createSession() {
+    createSession(opts = {}) {
         return {
             id: `s_${Date.now()}`,
             title: 'New Chat',
             created: new Date().toISOString(),
-            messages: []
+            messages: [],
+            parentSessionId: opts.parentSessionId || null,
+            forkMsgIdx:      opts.forkMsgIdx != null ? opts.forkMsgIdx : null
         };
     }
 }

@@ -7,6 +7,7 @@ const toolHandler = require('./toolHandler');
 const HistoryManager = require('./historyManager');
 const logger = require('./logger');
 const certLoader = require('./certLoader');
+const { normalizeUsage } = require('./usageNormalizer');
 
 const MODELS_CACHE_TTL  = 30 * 24 * 60 * 60 * 1000;  // 30 days
 const MONTHLY_CACHE_TTL =  3 * 24 * 60 * 60 * 1000;  // 3 days
@@ -157,7 +158,7 @@ class ChatViewProvider {
 
             case 'send':
                 if (!agentRunner.isRunning()) {
-                    await this._handleUserMessage(msg.text);
+                    await this._handleUserMessage(msg.text, msg.codeContextBlocks || []);
                 }
                 break;
 
@@ -266,6 +267,10 @@ class ChatViewProvider {
                 break;
             }
 
+            case 'copyToClipboard':
+                if (msg.text != null) vscode.env.clipboard.writeText(String(msg.text));
+                break;
+
             case 'openSettings':
                 vscode.commands.executeCommand(
                     'workbench.action.openSettings',
@@ -328,7 +333,7 @@ class ChatViewProvider {
 
     // ── User message handling ──────────────────────────────────────────────────
 
-    async _handleUserMessage(rawText) {
+    async _handleUserMessage(rawText, codeContextBlocks = []) {
         if (!rawText.trim()) return;
 
         const { displayText, contextBlocks } = await this._resolveAtRefs(rawText);
@@ -337,6 +342,11 @@ class ChatViewProvider {
         if (contextBlocks.length > 0) {
             apiContent += '\n\n' + contextBlocks.map(b =>
                 `<file path="${b.path}">\n${b.content}\n</file>`
+            ).join('\n\n');
+        }
+        if (codeContextBlocks.length > 0) {
+            apiContent += '\n\n' + codeContextBlocks.map(b =>
+                `<code_context file="${b.file}" lines="${b.startLine}-${b.endLine}">\n${b.code}\n</code_context>`
             ).join('\n\n');
         }
 
@@ -352,7 +362,8 @@ class ChatViewProvider {
             id: `u_${Date.now()}`,
             ts: Date.now(),
             text: rawText,
-            contextFiles: contextBlocks.map(b => b.path)
+            contextFiles: contextBlocks.map(b => b.path),
+            codeContexts: codeContextBlocks.map(b => ({ file: b.file, startLine: b.startLine, endLine: b.endLine }))
         });
 
         await this._runAgent();
@@ -382,7 +393,10 @@ class ChatViewProvider {
         }
         if (sliceAt === -1) sliceAt = 0;
 
-        const newSession = this._history.createSession();
+        const newSession = this._history.createSession({
+            parentSessionId: this._session.id,
+            forkMsgIdx: userMsgIdx
+        });
         newSession.messages = this._session.messages.slice(0, sliceAt);
         if (newSession.messages.length > 0) {
             const firstUser = newSession.messages.find(m => m.role === 'user');
@@ -427,11 +441,11 @@ class ChatViewProvider {
                         try {
                             const html = await vscode.commands.executeCommand('markdown.api.render', text);
                             if (html) this.sendToWebview({ type: 'renderedMarkdown', id: msgId, html });
-                        } catch { /* markdown extension unavailable — webview falls back to built-in renderer */ }
+                        } catch (e) { logger.verbose('markdown.api.render failed', e?.message); }
                     }
                 },
                 onUsage: ({ usage, uuid, msgId }) => {
-                    this.sendToWebview({ type: 'usage', msgId, usage, uuid });
+                    this.sendToWebview({ type: 'usage', msgId, usage: normalizeUsage(usage), uuid });
                 },
                 onToolStart: (call) => {
                     this.sendToWebview({ type: 'toolStart', msgId: call.msgId, call });
