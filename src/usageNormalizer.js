@@ -35,7 +35,7 @@ function normalizeUsage(raw) {
 
     const extra = [];
     for (const [k, v] of Object.entries(raw)) {
-        if (!ALL_KNOWN.has(k) && v != null) {
+        if (!ALL_KNOWN.has(k) && v != null && typeof v !== 'object') {
             extra.push({ name: k, value: v });
         }
     }
